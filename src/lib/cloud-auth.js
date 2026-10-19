@@ -2,38 +2,53 @@ import { supabase } from './supabase.js'
 import { api } from './api.js'
 
 export async function cloudLogin(email, password) {
+  const cleanEmail = email.trim().toLowerCase()
+
+  // 1. PRIMARY: Try Supabase Auth first
   if (supabase) {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error || !data?.session?.access_token) {
-      throw new Error(error?.message || 'Login failed')
-    }
-
-    const token = data.session.access_token
-    localStorage.setItem('tbw_token', token)
-    window.__tbw_supabase_token = token
-
     try {
-      const response = await fetch('/api/auth/me', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'X-Requested-With': 'XMLHttpRequest'
-        },
-        credentials: 'same-origin',
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password
       })
-      if (!response.ok) throw new Error('This account cannot access the dashboard')
-      const result = await response.json()
-      if (!result?.success || !result?.data?.user) throw new Error('Invalid dashboard user response')
-      return result.data.user
-    } catch (err) {
-      await supabase.auth.signOut().catch(() => {})
-      localStorage.removeItem('tbw_token')
-      throw err
+
+      if (!error && data?.session?.access_token) {
+        const token = data.session.access_token
+        localStorage.setItem('tbw_token', token)
+        window.__tbw_supabase_token = token
+
+        try {
+          const response = await fetch('/api/auth/me', {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            credentials: 'same-origin',
+          })
+          if (!response.ok) throw new Error('This account cannot access the dashboard')
+          const result = await response.json()
+          if (!result?.success || !result?.data?.user) throw new Error('Invalid dashboard user response')
+          return result.data.user
+        } catch (meErr) {
+          await supabase.auth.signOut().catch(() => {})
+          localStorage.removeItem('tbw_token')
+          throw meErr
+        }
+      }
+    } catch (supaErr) {
+      if (
+        supaErr.message === 'This account cannot access the dashboard' ||
+        supaErr.message === 'Invalid dashboard user response'
+      ) {
+        throw supaErr
+      }
+      // If Supabase Auth failed (e.g. invalid credentials or legacy user), fall through to backend endpoint
     }
   }
 
-  // Fallback to Express backend auth endpoint
+  // 2. FALLBACK: Express backend auth endpoint (for legacy accounts or server-side mapping)
   const res = await api.post('/api/auth/login', {
-    email: email.trim().toLowerCase(),
+    email: cleanEmail,
     password
   })
 

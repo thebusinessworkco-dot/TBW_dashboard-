@@ -5,6 +5,7 @@ import { PageHead, Toggle } from '../components/ui'
 import { useApp } from '../lib/store'
 import { money, uid } from '../lib/format'
 import { api } from '../lib/api'
+import { supabase } from '../lib/supabase'
 
 const LIMITS = [
   { label: 'Daily transfers', used: 12400, cap: 25000 },
@@ -119,6 +120,11 @@ export default function Account() {
     })
 
     if (res.success && res.data?.user) {
+      if (supabase) {
+        await supabase.auth.updateUser({
+          data: { name: d.name.trim(), full_name: d.name.trim() }
+        }).catch(() => {})
+      }
       setUser((u) => ({
         ...u,
         ...res.data.user,

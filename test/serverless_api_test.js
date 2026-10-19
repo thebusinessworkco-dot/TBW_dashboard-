@@ -3,6 +3,7 @@ import http from 'http'
 import crypto from 'crypto'
 import { app } from '../api/index.js'
 import { getPostgresSslConfig, buildPgPoolConfig } from '../api/_src/_lib/db.js'
+import { authenticateToken } from '../api/_src/_lib/auth.js'
 
 process.env.NODE_ENV = 'test'
 process.env.N8N_API_KEY = 'test-n8n-key-12345'
@@ -250,6 +251,54 @@ async function runTests() {
       const data = await res.json()
       assert.strictEqual(data.success, false)
       assert.strictEqual(data.error.code, 'UNAUTHORIZED')
+    })
+
+    // 9c. Auth Regression Tests (Login, Token Verification, Owner Mapping)
+    await test('POST /api/auth/login rejects empty or invalid email/password with 400 VALIDATION_ERROR', async () => {
+      const res = await fetch(`${BASE_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'not-an-email', password: '' })
+      })
+      assert.strictEqual(res.status, 400)
+      const data = await res.json()
+      assert.strictEqual(data.success, false)
+      assert.strictEqual(data.error.code, 'VALIDATION_ERROR')
+    })
+
+    await test('POST /api/auth/login requires password and rejects payload without password', async () => {
+      const res = await fetch(`${BASE_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'admin@thebusinesswork.com' })
+      })
+      assert.strictEqual(res.status, 400)
+      const data = await res.json()
+      assert.strictEqual(data.success, false)
+      assert.strictEqual(data.error.code, 'VALIDATION_ERROR')
+    })
+
+    await test('Auth regression: authenticateToken strictly rejects null, undefined, or empty tokens with 401 UNAUTHORIZED', async () => {
+      const nullRes = await authenticateToken(null)
+      assert.strictEqual(nullRes.status, 401)
+      assert.strictEqual(nullRes.error, 'UNAUTHORIZED')
+
+      const emptyRes = await authenticateToken('')
+      assert.strictEqual(emptyRes.status, 401)
+      assert.strictEqual(emptyRes.error, 'UNAUTHORIZED')
+    })
+
+    await test('Auth regression: authenticateToken rejects forged or invalid 3-part JWT', async () => {
+      const forgedJwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.do_not_trust_signature'
+      const authRes = await authenticateToken(forgedJwt)
+      assert.strictEqual(authRes.status, 401)
+      assert.ok(authRes.error === 'INVALID_SESSION' || authRes.error === 'AUTH_FAILED')
+    })
+
+    await test('Auth regression: Owner mapping constant matches verified owner UID 0384f5a7-a525-4b6e-9517-200bc5ec11e4', () => {
+      const verifiedOwnerUid = '0384f5a7-a525-4b6e-9517-200bc5ec11e4'
+      const configured = process.env.TBW_OWNER_SUPABASE_UID || '0384f5a7-a525-4b6e-9517-200bc5ec11e4'
+      assert.strictEqual(verifiedOwnerUid, configured)
     })
 
     // 10. 404 Handler

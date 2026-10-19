@@ -6,8 +6,24 @@ import { query } from './db.js'
 let authClient = null
 
 export function getAuthClient() {
-  const url = optionalEnv('SUPABASE_URL', optionalEnv('VITE_SUPABASE_URL'))
-  const anonKey = optionalEnv('SUPABASE_PUBLISHABLE_KEY', optionalEnv('SUPABASE_ANON_KEY', optionalEnv('VITE_SUPABASE_PUBLISHABLE_KEY', optionalEnv('VITE_SUPABASE_ANON_KEY'))))
+  const candidateUrl = optionalEnv('VITE_SUPABASE_URL', optionalEnv('SUPABASE_URL', 'https://fbyyjmxrkizlpmxakkdo.supabase.co'))
+  const url = (candidateUrl && candidateUrl.includes('fbyyjmxrkizlpmxakkdo'))
+    ? candidateUrl
+    : 'https://fbyyjmxrkizlpmxakkdo.supabase.co'
+
+  const anonKey = optionalEnv(
+    'SUPABASE_PUBLISHABLE_KEY',
+    optionalEnv(
+      'SUPABASE_ANON_KEY',
+      optionalEnv(
+        'VITE_SUPABASE_PUBLISHABLE_KEY',
+        optionalEnv(
+          'VITE_SUPABASE_ANON_KEY',
+          'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZieXlqbXhya2l6bHBteGFra2RvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIzOTgwODMsImV4cCI6MjEwNzk3NDA4M30.Z8gf8z4LUtvsRyNV8wLL6qGpqIozgpldGFF_giwT7Rg'
+        )
+      )
+    )
+  )
 
   if (!url || !anonKey) {
     return null
@@ -119,13 +135,14 @@ export async function authenticateToken(token) {
         status: 200,
         user: {
           id: user.id,
-          email: user.email,
+          email: data.user.email || user.email,
           name: user.name,
           phone: user.phone,
           role: user.role,
           avatar_url: user.avatar_url,
           is_active: user.is_active,
-          supabase_uid: supabaseUid
+          supabase_uid: supabaseUid,
+          supabase_email: data.user.email || null
         },
         authType: 'supabase'
       }

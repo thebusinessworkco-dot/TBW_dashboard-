@@ -26,27 +26,98 @@ const updateProfileSchema = z.object({
   phone: z.string().max(30).optional().nullable()
 })
 
+import { optionalEnv } from '../_lib/env.js'
+
 // POST /api/auth/login
 router.post('/login', loginLimiter, validate({ body: loginSchema }), async (req, res, next) => {
   try {
     const { email, password } = req.body
-
-    const userRes = await query(`
-      SELECT id, email, password_hash, name, phone, role, avatar_url, is_active
-      FROM public.users
-      WHERE email = $1
-      LIMIT 1
-    `, [email])
-
-    const user = userRes.rows[0]
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || ''
     const userAgent = req.headers['user-agent'] || ''
 
-    if (!user) {
+    const configuredOwnerUid = optionalEnv('TBW_OWNER_SUPABASE_UID', '0384f5a7-a525-4b6e-9517-200bc5ec11e4')
+    const configuredOwnerLegacyId = parseInt(optionalEnv('TBW_OWNER_LEGACY_ID', '1'), 10)
+
+    let authenticatedUser = null
+    let token = null
+    let isSupabaseAuth = false
+
+    // 1. PRIMARY: Authenticate via Supabase Auth
+    const client = getAuthClient()
+    if (client) {
+      try {
+        const { data: supaData, error: supaErr } = await client.auth.signInWithPassword({
+          email,
+          password
+        })
+
+        if (!supaErr && supaData?.user && supaData?.session) {
+          const supabaseUid = supaData.user.id
+          const supabaseEmail = supaData.user.email
+
+          // Find mapped user in tbw_cloud.auth_links
+          let linkRes = await query(`
+            SELECT u.id, u.email, u.name, u.phone, u.role, u.avatar_url, u.is_active
+            FROM public.users u
+            JOIN tbw_cloud.auth_links link ON link.legacy_user_id = u.id
+            WHERE link.supabase_user_id = $1::uuid
+            LIMIT 1
+          `, [supabaseUid])
+
+          // If not in auth_links, check if it matches configured Owner UID
+          if (linkRes.rows.length === 0 && supabaseUid === configuredOwnerUid) {
+            await query(`
+              INSERT INTO tbw_cloud.auth_links (supabase_user_id, legacy_user_id)
+              VALUES ($1::uuid, $2)
+              ON CONFLICT (supabase_user_id) DO NOTHING
+            `, [supabaseUid, configuredOwnerLegacyId])
+
+            linkRes = await query(`
+              SELECT u.id, u.email, u.name, u.phone, u.role, u.avatar_url, u.is_active
+              FROM public.users u
+              WHERE u.id = $1
+              LIMIT 1
+            `, [configuredOwnerLegacyId])
+          }
+
+          if (linkRes.rows.length > 0) {
+            authenticatedUser = {
+              ...linkRes.rows[0],
+              email: supabaseEmail || linkRes.rows[0].email,
+              supabase_uid: supabaseUid
+            }
+            token = supaData.session.access_token
+            isSupabaseAuth = true
+          }
+        }
+      } catch {
+        // Supabase sign-in threw or timed out, continue to fallback check
+      }
+    }
+
+    // 2. FALLBACK: Check PostgreSQL public.users with bcrypt (for legacy or offline accounts)
+    if (!authenticatedUser) {
+      const userRes = await query(`
+        SELECT id, email, password_hash, name, phone, role, avatar_url, is_active
+        FROM public.users
+        WHERE email = $1
+        LIMIT 1
+      `, [email])
+
+      const legacyUser = userRes.rows[0]
+      if (legacyUser && legacyUser.password_hash) {
+        const passwordMatch = await bcrypt.compare(password, legacyUser.password_hash)
+        if (passwordMatch) {
+          authenticatedUser = legacyUser
+        }
+      }
+    }
+
+    if (!authenticatedUser) {
       await logAudit({
         action: 'auth.login_failed',
         entityType: 'user',
-        details: { email, reason: 'user_not_found' },
+        details: { email, reason: 'invalid_credentials' },
         ipAddress
       })
       return res.status(401).json({
@@ -58,12 +129,12 @@ router.post('/login', loginLimiter, validate({ body: loginSchema }), async (req,
       })
     }
 
-    if (!user.is_active) {
+    if (!authenticatedUser.is_active) {
       await logAudit({
-        userId: user.id,
+        userId: authenticatedUser.id,
         action: 'auth.login_failed',
         entityType: 'user',
-        entityId: user.id,
+        entityId: authenticatedUser.id,
         details: { email, reason: 'account_inactive' },
         ipAddress
       })
@@ -76,38 +147,21 @@ router.post('/login', loginLimiter, validate({ body: loginSchema }), async (req,
       })
     }
 
-    const passwordMatch = await bcrypt.compare(password, user.password_hash)
-    if (!passwordMatch) {
-      await logAudit({
-        userId: user.id,
-        action: 'auth.login_failed',
-        entityType: 'user',
-        entityId: user.id,
-        details: { email, reason: 'invalid_password' },
-        ipAddress
-      })
-      return res.status(401).json({
-        success: false,
-        error: {
-          code: 'INVALID_CREDENTIALS',
-          message: 'Invalid email or password.'
-        }
-      })
-    }
-
-    // Generate secure session token
-    const token = generateToken(32)
+    // Generate session token if not holding Supabase JWT
     const maxAgeHours = parseInt(process.env.SESSION_MAX_AGE_HOURS || '72', 10)
-    const expiresAt = new Date(Date.now() + maxAgeHours * 60 * 60 * 1000).toISOString()
+    if (!token) {
+      token = generateToken(32)
+      const expiresAt = new Date(Date.now() + maxAgeHours * 60 * 60 * 1000).toISOString()
 
-    await query(`
-      INSERT INTO public.sessions (id, user_id, device_info, ip_address, expires_at)
-      VALUES ($1, $2, $3, $4, $5)
-    `, [token, user.id, userAgent.substring(0, 255), ipAddress, expiresAt])
+      await query(`
+        INSERT INTO public.sessions (id, user_id, device_info, ip_address, expires_at)
+        VALUES ($1, $2, $3, $4, $5)
+      `, [token, authenticatedUser.id, userAgent.substring(0, 255), ipAddress, expiresAt])
+    }
 
     await query(`
       UPDATE public.users SET last_login_at = now() WHERE id = $1
-    `, [user.id])
+    `, [authenticatedUser.id])
 
     // Set secure cookie
     const isProd = process.env.NODE_ENV === 'production'
@@ -124,10 +178,14 @@ router.post('/login', loginLimiter, validate({ body: loginSchema }), async (req,
     res.cookie('tbw_session', token, cookieOptions)
 
     await logAudit({
-      userId: user.id,
+      userId: authenticatedUser.id,
       action: 'auth.login_success',
       entityType: 'session',
-      details: { email: user.email, role: user.role },
+      details: {
+        email: authenticatedUser.email,
+        role: authenticatedUser.role,
+        auth_provider: isSupabaseAuth ? 'supabase_auth' : 'postgresql_bcrypt'
+      },
       ipAddress
     })
 
@@ -136,12 +194,13 @@ router.post('/login', loginLimiter, validate({ body: loginSchema }), async (req,
       data: {
         token,
         user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          phone: user.phone,
-          role: user.role,
-          avatar_url: user.avatar_url
+          id: authenticatedUser.id,
+          email: authenticatedUser.email,
+          name: authenticatedUser.name,
+          phone: authenticatedUser.phone,
+          role: authenticatedUser.role,
+          avatar_url: authenticatedUser.avatar_url,
+          supabase_uid: authenticatedUser.supabase_uid || undefined
         }
       }
     })
@@ -277,17 +336,23 @@ router.put('/password', requireAuth, validate({ body: changePasswordSchema }), a
     }
 
     const client = getAuthClient()
-    if (client && user.email) {
-      try {
-        const { data: signInData, error: signInError } = await client.auth.signInWithPassword({
-          email: user.email,
-          password: current_password
-        })
-        if (!signInError && signInData?.session) {
-          verified = true
-          supabaseSession = signInData.session
-        }
-      } catch {}
+    const emailsToTry = [req.user.supabase_email, user.email, req.user.email].filter(Boolean)
+    const uniqueEmails = [...new Set(emailsToTry)]
+
+    if (client && !verified) {
+      for (const candidateEmail of uniqueEmails) {
+        try {
+          const { data: signInData, error: signInError } = await client.auth.signInWithPassword({
+            email: candidateEmail,
+            password: current_password
+          })
+          if (!signInError && signInData?.session) {
+            verified = true
+            supabaseSession = signInData.session
+            break
+          }
+        } catch {}
+      }
     }
 
     if (!verified) {
