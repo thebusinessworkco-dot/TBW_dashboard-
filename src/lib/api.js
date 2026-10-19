@@ -1,14 +1,14 @@
 import { supabase } from './supabase.js'
 
-// In Vercel deployment, the API is serverless on the same origin.
-// Strictly reject legacy external VPS domain (api.thebusinesswork.com) to ensure same-origin relative fetch.
-const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim()
-const API_BASE = rawApiUrl.includes('api.thebusinesswork.com') ? '' : rawApiUrl
+// In Vercel deployment, frontend and serverless API are hosted on the exact same origin.
+// Enforce same-origin relative API requests (/api/*) unconditionally.
+export const API_BASE = ''
 
 let isRefreshing = false
 
 export async function apiRequest(endpoint, options = {}, isRetry = false) {
-  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`
+  const cleanEndpoint = endpoint.replace(/^https?:\/\/api\.thebusinesswork\.com/i, '')
+  const url = cleanEndpoint.startsWith('http') ? cleanEndpoint : `${API_BASE}${cleanEndpoint}`
   const headers = {
     'Content-Type': 'application/json',
     'X-Requested-With': 'XMLHttpRequest',
