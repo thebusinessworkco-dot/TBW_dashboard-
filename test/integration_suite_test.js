@@ -3,7 +3,7 @@ import http from 'http'
 import crypto from 'crypto'
 import { app } from '../api/index.js'
 import { googleSheetsService } from '../api/services/googleSheets.js'
-import { getPostgresSslConfig } from '../database/migrate_data.js'
+import { getPostgresSslConfig, buildPgPoolConfig } from '../database/migrate_data.js'
 
 process.env.NODE_ENV = 'test'
 process.env.N8N_API_KEY = 'test-verified-n8n-key-9988'
@@ -257,16 +257,16 @@ async function runIntegrationSuite() {
     // ------------------------------------------------------------------------
     // 6. DATABASE MIGRATION SECURE TLS & CA VALIDATION
     // ------------------------------------------------------------------------
-    await test('Migration TLS: getPostgresSslConfig strictly enforces rejectUnauthorized: true with Supabase Root CA', () => {
-      const remoteUrl = 'postgresql://postgres.fbyyjmxrkizlpmxakkdo:secret@aws-0-ap-south-1.pooler.supabase.com:6543/postgres'
-      const ssl = getPostgresSslConfig(remoteUrl)
+    await test('Migration TLS: getPostgresSslConfig strictly enforces rejectUnauthorized: true with Supabase Root & Intermediate CA', () => {
+      const poolerUrl = 'postgresql://postgres.fbyyjmxrkizlpmxakkdo:secret@aws-0-ap-southeast-2.pooler.supabase.com:6543/postgres?sslmode=require'
+      const ssl = getPostgresSslConfig(poolerUrl)
       
-      assert.ok(ssl, 'SSL configuration should not be false for remote Supabase connection')
+      assert.ok(ssl, 'SSL configuration should not be false for remote Supabase pooler')
       assert.strictEqual(ssl.rejectUnauthorized, true, 'rejectUnauthorized must strictly be true')
+      assert.strictEqual(ssl.servername, 'aws-0-ap-southeast-2.pooler.supabase.com', 'SNI servername must match pooler hostname')
       assert.ok(Array.isArray(ssl.ca), 'CA must be an array of trusted certificates')
-      assert.ok(ssl.ca.length > 1, 'CA bundle must contain root certs plus Supabase CA')
       
-      const hasSupabaseCa = ssl.ca.some(certPem => {
+      const hasRootCa = ssl.ca.some(certPem => {
         try {
           const x509 = new crypto.X509Certificate(certPem)
           return x509.subject.includes('Supabase Root 2021 CA')
@@ -274,7 +274,30 @@ async function runIntegrationSuite() {
           return false
         }
       })
-      assert.strictEqual(hasSupabaseCa, true, 'Supabase Root 2021 CA must be included in the trusted CA list')
+      assert.strictEqual(hasRootCa, true, 'Supabase Root 2021 CA must be included in the trusted CA list')
+
+      const hasIntermediateCa = ssl.ca.some(certPem => {
+        try {
+          const x509 = new crypto.X509Certificate(certPem)
+          return x509.subject.includes('Supabase Intermediate 2021 CA')
+        } catch {
+          return false
+        }
+      })
+      assert.strictEqual(hasIntermediateCa, true, 'Supabase Intermediate 2021 CA must be included in the trusted CA list')
+    })
+
+    await test('Migration TLS: buildPgPoolConfig prevents pg-connection-string from clobbering ssl options', () => {
+      const urlWithSslmode = 'postgresql://user:pass@aws-0-ap-southeast-2.pooler.supabase.com:6543/postgres?sslmode=require'
+      const sslConfig = { rejectUnauthorized: true, ca: ['TEST_CA'], servername: 'aws-0-ap-southeast-2.pooler.supabase.com' }
+      const poolConfig = buildPgPoolConfig(urlWithSslmode, sslConfig)
+
+      assert.strictEqual(poolConfig.host, 'aws-0-ap-southeast-2.pooler.supabase.com')
+      assert.strictEqual(poolConfig.port, 6543)
+      assert.strictEqual(poolConfig.user, 'user')
+      assert.strictEqual(poolConfig.password, 'pass')
+      assert.strictEqual(poolConfig.database, 'postgres')
+      assert.deepStrictEqual(poolConfig.ssl, sslConfig, 'Explicit sslConfig must be preserved intact without pg-connection-string override')
     })
 
     await test('Migration TLS: getPostgresSslConfig disables SSL for localhost connections', () => {

@@ -22,11 +22,43 @@ import { readdirSync, existsSync, readFileSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import tls from 'tls'
+import { parse as parseConnectionString } from 'pg-connection-string'
 import dotenv from 'dotenv'
 
 dotenv.config()
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+
+/**
+ * Official Supabase Intermediate 2021 CA Certificate
+ * Subject: C=US, ST=Delware, L=New Castle, O=Supabase Inc, CN=Supabase Intermediate 2021 CA
+ * Issuer:  C=US, ST=Delware, L=New Castle, O=Supabase Inc, CN=Supabase Root 2021 CA
+ * Valid until: Oct 21 07:53:45 2033 GMT
+ * Used by Supabase Transaction Pooler (*.pooler.supabase.com:6543) and Session Poolers.
+ */
+export const SUPABASE_INTERMEDIATE_CA = `-----BEGIN CERTIFICATE-----
+MIIDvzCCAqegAwIBAgIUBhalAwMQ7BA1NH7td4msPPwxHzowDQYJKoZIhvcNAQEL
+BQAwazELMAkGA1UEBhMCVVMxEDAOBgNVBAgMB0RlbHdhcmUxEzARBgNVBAcMCk5l
+dyBDYXN0bGUxFTATBgNVBAoMDFN1cGFiYXNlIEluYzEeMBwGA1UEAwwVU3VwYWJh
+c2UgUm9vdCAyMDIxIENBMB4XDTIzMTAyNDA3NTM0NVoXDTMzMTAyMTA3NTM0NVow
+czELMAkGA1UEBhMCVVMxEDAOBgNVBAgMB0RlbHdhcmUxEzARBgNVBAcMCk5ldyBD
+YXN0bGUxFTATBgNVBAoMDFN1cGFiYXNlIEluYzEmMCQGA1UEAwwdU3VwYWJhc2Ug
+SW50ZXJtZWRpYXRlIDIwMjEgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+AoIBAQDOAMhXirH+EGIn8GaDp8T53rEogf7kM8OKW2uQ5yU/wxPa+w8BXgTzWy3W
+JDAUhZE78oUtAd9kk5zKPrLXoT3W61PPnOc/9dceL5gB7/78m7EKCySziAA2c8vR
+fnYPfznedDXi2lryttSYmMf2qbZDErAxwJDUm6cyq+HLAfb2qUH28u6jP8I9GDtG
+PkQnjqtiRXEKjbTc/ntqCQrhtFK02mHkMSju7nEpkNYryunv5n/c9mrRY9/8GwmP
+3uSZz3CQ8yQ/E0f8T9gCca2TcKuTQmW2pQqtHv1MuZ3jfJE5Nr9+Fap5kdzDJtdf
+BdKofVNZlnYIru5yhUZywY3xYFfHAgMBAAGjUzBRMB0GA1UdDgQWBBQVoFMuvXJ9
+Yv+QJr6/GJX0Z0VA+jAfBgNVHSMEGDAWgBSo17l2N9gs7ZISJp4OMiTVLWlGLDAP
+BgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAwdx0XJRHTf/crGpsr
+n07uRziGSswWWTe+kDATMQeRZAEW3grVki5LDzs+JLbVIJYhRXFRXkqTRJdSGAgH
+/0LNw7GDUwKOLnIRoYR3ILqSFZbkXbrYQ4Yir5yQZWgiNhRNfpEnMMIEQEZoSuFn
+8Uh6M4HNfVuwBPgV0/gvKEja3DjJgwPAYzoXvKh5m3fKTt2c22YcTDdZTUDfrst6
+Vpt/M03FY6D+897yfNR+nEzeEwjzHMZkperTwVfmBdyXIgIWexQ/whoky7+I4pjz
+eLtkPBlwE3WB9fGZVjZqdUNSasS8mmWIyxHPttTzTHHmElDw2OQ/s9HjfCxJztk2
+VCgJ
+-----END CERTIFICATE-----`
 
 /**
  * Official Supabase Root 2021 CA Certificate
@@ -61,7 +93,8 @@ o/bKiIz+Fq8=
 /**
  * Configure secure TLS options for PostgreSQL connection.
  * Strictly verifies certificates (rejectUnauthorized: true) using the system trust store,
- * the Supabase Root CA, and any custom CA certificates provided.
+ * the complete Supabase CA Chain (Intermediate + Root), and any custom CA certificates provided.
+ * Preserves Server Name Indication (SNI) for hostname verification.
  */
 export function getPostgresSslConfig(databaseUrl, customCaPath = null) {
   const isLocalPg = databaseUrl.includes('localhost') || databaseUrl.includes('127.0.0.1')
@@ -69,16 +102,31 @@ export function getPostgresSslConfig(databaseUrl, customCaPath = null) {
     return false
   }
 
+  // Parse hostname for SNI servername matching
+  let host = ''
+  try {
+    const cleanUrl = databaseUrl.replace(/([?&])(sslmode|ssl)=[^&]+(&|$)/gi, '$1').replace(/[?&]$/, '')
+    const parsed = parseConnectionString(cleanUrl)
+    host = parsed.host || ''
+  } catch {}
+
   const caList = [...tls.rootCertificates]
 
   // 1. Check custom CA from argument, PG_CA_CERT, SUPABASE_SSL_CERT, or PGSSLROOTCERT
   const envCa = customCaPath || process.env.PG_CA_CERT || process.env.SUPABASE_SSL_CERT || process.env.PGSSLROOTCERT
   if (envCa) {
     if (envCa.includes('-----BEGIN CERTIFICATE-----')) {
-      caList.push(envCa.trim())
+      const parsedCerts = envCa.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) || [envCa.trim()]
+      for (const c of parsedCerts) {
+        if (!caList.includes(c.trim())) caList.push(c.trim())
+      }
     } else if (existsSync(envCa)) {
       try {
-        caList.push(readFileSync(envCa, 'utf8').trim())
+        const fileContent = readFileSync(envCa, 'utf8').trim()
+        const parsedCerts = fileContent.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) || [fileContent]
+        for (const c of parsedCerts) {
+          if (!caList.includes(c.trim())) caList.push(c.trim())
+        }
       } catch (err) {
         console.warn(`  ⚠ Warning: Could not read custom CA file "${envCa}": ${err.message}`)
       }
@@ -94,23 +142,135 @@ export function getPostgresSslConfig(databaseUrl, customCaPath = null) {
   for (const candidate of localCandidates) {
     if (existsSync(candidate)) {
       try {
-        const cert = readFileSync(candidate, 'utf8').trim()
-        if (!caList.includes(cert)) {
-          caList.push(cert)
+        const certContent = readFileSync(candidate, 'utf8').trim()
+        const parsedCerts = certContent.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) || [certContent]
+        for (const c of parsedCerts) {
+          if (!caList.includes(c.trim())) caList.push(c.trim())
         }
         break
       } catch {}
     }
   }
 
-  // 3. Fallback: Always include official Supabase Root 2021 CA certificate
+  // 3. Fallback: Always include official Supabase Intermediate and Root 2021 CA certificates
+  if (!caList.includes(SUPABASE_INTERMEDIATE_CA.trim())) {
+    caList.push(SUPABASE_INTERMEDIATE_CA.trim())
+  }
   if (!caList.includes(SUPABASE_ROOT_CA.trim())) {
     caList.push(SUPABASE_ROOT_CA.trim())
   }
 
-  return {
+  const sslConfig = {
     rejectUnauthorized: true,
     ca: caList
+  }
+
+  if (host) {
+    sslConfig.servername = host
+  }
+
+  return sslConfig
+}
+
+/**
+ * Builds pg.Pool configuration object directly from connection parameters.
+ * 
+ * CRITICAL ARCHITECTURAL FIX:
+ * When connectionString is passed directly to new pg.Pool({ connectionString, ssl }),
+ * pg's internal ConnectionParameters constructor runs:
+ *   config = Object.assign({}, config, parse(config.connectionString))
+ * If connectionString contains ?sslmode=require, pg-connection-string returns { ssl: {} },
+ * which OVERWRITES config.ssl with {}, wiping out custom CA bundles and causing
+ * "self-signed certificate in certificate chain".
+ *
+ * buildPgPoolConfig parses the URL cleanly, removes sslmode/ssl parameters, and assigns
+ * the strict TLS ssl configuration directly without Object.assign collisions.
+ */
+export function buildPgPoolConfig(databaseUrl, sslConfig) {
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL is required to build pool config')
+  }
+
+  const cleanUrl = databaseUrl
+    .replace(/([?&])(sslmode|ssl)=[^&]+(&|$)/gi, '$1')
+    .replace(/[?&]$/, '')
+
+  const parsed = parseConnectionString(cleanUrl)
+
+  const config = {
+    user: parsed.user,
+    password: parsed.password,
+    host: parsed.host,
+    port: parsed.port ? parseInt(parsed.port, 10) : 5432,
+    database: parsed.database || parsed.user || 'postgres',
+    ssl: sslConfig,
+    max: 2,
+    connectionTimeoutMillis: 10000
+  }
+
+  if (parsed.application_name) config.application_name = parsed.application_name
+  if (parsed.options) config.options = parsed.options
+
+  return config
+}
+
+/**
+ * Minimal Read-Only PostgreSQL TLS Connection Test.
+ * Validates TLS certificate chain, cipher, database connectivity, and engine version.
+ * Zero data writes, zero transactions, zero schema changes.
+ */
+export async function testPostgresConnection(databaseUrl = process.env.DATABASE_URL, customCaPath = null) {
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL environment variable or argument is required')
+  }
+
+  console.log('\n===============================================================')
+  console.log(' THE BUSINESS WORK - POSTGRESQL TLS CONNECTION TEST')
+  console.log('===============================================================')
+  console.log(`Target: ${maskConnectionString(databaseUrl)}`)
+
+  const sslConfig = getPostgresSslConfig(databaseUrl, customCaPath)
+  const poolConfig = buildPgPoolConfig(databaseUrl, sslConfig)
+
+  if (sslConfig) {
+    console.log('Mode:   Secure TLS Verification (rejectUnauthorized: true, with Supabase CA Chain)')
+    console.log(`Host:   ${poolConfig.host}:${poolConfig.port}`)
+    if (sslConfig.servername) console.log(`SNI:    ${sslConfig.servername}`)
+  } else {
+    console.log('Mode:   Localhost Connection (SSL disabled)')
+  }
+  console.log('---------------------------------------------------------------\n')
+
+  const pool = new pg.Pool(poolConfig)
+  let client
+  try {
+    client = await pool.connect()
+
+    const stream = client.connection?.stream
+    const tlsProtocol = stream?.getProtocol ? stream.getProtocol() : 'N/A'
+    const tlsCipher = stream?.getCipher ? stream.getCipher() : null
+    const peerCert = stream?.getPeerCertificate ? stream.getPeerCertificate() : null
+
+    const res = await client.query('SELECT current_database() AS db, current_user AS usr, version() AS ver')
+    const row = res.rows[0]
+
+    console.log('✓ PostgreSQL TLS Connection Verified Successfully!')
+    console.log(`  Database:     ${row.db}`)
+    console.log(`  User:         ${row.usr}`)
+    console.log(`  TLS Protocol: ${tlsProtocol}`)
+    if (tlsCipher) {
+      console.log(`  TLS Cipher:   ${tlsCipher.name} (${tlsCipher.version})`)
+    }
+    if (peerCert && peerCert.subject) {
+      console.log(`  Peer Subject: ${peerCert.subject.CN || peerCert.subject.O || 'Verified'}`)
+      console.log(`  Peer Issuer:  ${peerCert.issuer?.CN || peerCert.issuer?.O || 'Verified'}`)
+    }
+    console.log(`  Engine:       ${row.ver.split(',')[0]}`)
+    console.log('\nAll TLS certificate and authentication checks passed. Database is ready.')
+    return { success: true, info: row, tlsProtocol, tlsCipher }
+  } finally {
+    if (client) client.release()
+    await pool.end()
   }
 }
 
@@ -201,22 +361,42 @@ export async function runMigration(options = {}) {
   const args = process.argv.slice(2)
   const isDryRun = options.dryRun || args.includes('--dry-run')
   const isVerifyOnly = options.verifyOnly || args.includes('--verify-only')
+  const isTestConnection = options.testConnection || args.includes('--test-connection')
 
   const caArg = args.find(a => a.startsWith('--ca=') || a.startsWith('--ca-cert='))
   const customCaPath = options.caCert || (caArg ? caArg.split('=')[1] : null)
 
-  let sqlitePath = options.sqlitePath || args.find(a => !a.startsWith('--'))
+  const nonFlagArgs = args.filter(a => !a.startsWith('--'))
+  let databaseUrl = options.databaseUrl
+  let sqlitePath = options.sqlitePath
+
+  for (const arg of nonFlagArgs) {
+    if (arg.startsWith('postgresql://') || arg.startsWith('postgres://')) {
+      if (!databaseUrl) databaseUrl = arg
+    } else if (!sqlitePath) {
+      sqlitePath = arg
+    }
+  }
+
+  if (!databaseUrl) {
+    databaseUrl = process.env.DATABASE_URL
+  }
+
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL environment variable or argument is required for PostgreSQL migration')
+  }
+
+  // Handle read-only test connection mode before any SQLite operations
+  if (isTestConnection) {
+    return await testPostgresConnection(databaseUrl, customCaPath)
+  }
+
   if (!sqlitePath) {
     sqlitePath = findLatestBackup() || resolve(__dirname, '../server/data/tbw.db')
   }
 
   if (!existsSync(sqlitePath)) {
     throw new Error(`SQLite database not found at: ${sqlitePath}`)
-  }
-
-  const databaseUrl = options.databaseUrl || process.env.DATABASE_URL
-  if (!databaseUrl) {
-    throw new Error('DATABASE_URL environment variable is required for PostgreSQL migration')
   }
 
   console.log('\n===============================================================')
@@ -250,18 +430,16 @@ export async function runMigration(options = {}) {
   // --------------------------------------------------------------------------
   console.log('Step 2: Connecting to target PostgreSQL database...')
   const sslConfig = getPostgresSslConfig(databaseUrl, customCaPath)
+  const poolConfig = buildPgPoolConfig(databaseUrl, sslConfig)
+
   if (sslConfig) {
-    console.log('  ✓ Secure TLS enabled with trusted Supabase Root CA verification (rejectUnauthorized: true).')
+    console.log('  ✓ Secure TLS enabled with trusted Supabase CA chain (rejectUnauthorized: true).')
+    console.log(`  ✓ Target Host: ${poolConfig.host}:${poolConfig.port}${sslConfig.servername ? ' (SNI: ' + sslConfig.servername + ')' : ''}`)
   } else {
     console.log('  ✓ Local PostgreSQL connection (SSL disabled for localhost).')
   }
 
-  const pool = new pg.Pool({
-    connectionString: databaseUrl,
-    ssl: sslConfig,
-    max: 2,
-    connectionTimeoutMillis: 10000
-  })
+  const pool = new pg.Pool(poolConfig)
 
   const client = await pool.connect()
   console.log('  ✓ Connected to PostgreSQL successfully.')
