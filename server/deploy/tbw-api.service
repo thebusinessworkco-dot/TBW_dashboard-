@@ -1,0 +1,26 @@
+[Unit]
+Description=The Business Work API Server (Node.js & SQLite)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/tbw-api
+EnvironmentFile=/var/www/tbw-api/.env
+
+# Node flags: Restrict max old space to 192 MB for 1 GB RAM VPS baseline
+ExecStart=/usr/bin/node --max-old-space-size=192 src/index.js
+
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/tbw-api.log
+StandardError=append:/var/log/tbw-api.err.log
+
+# Resource Guards
+LimitNOFILE=65535
+MemoryMax=280M
+MemoryHigh=240M
+
+[Install]
+WantedBy=multi-user.target

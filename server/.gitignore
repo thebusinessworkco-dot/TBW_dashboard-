@@ -1,0 +1,21 @@
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# SQLite Database & Data
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Node dependencies
+node_modules/
+npm-debug.log*
+
+# Logs
+logs/
+*.log

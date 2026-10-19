@@ -1,0 +1,35 @@
+{
+  "name": "tbw-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "migrate": "node src/db/migrate.js",
+    "seed": "node src/db/seed.js",
+    "backup": "node src/db/backup.js",
+    "restore": "node src/db/restore.js",
+    "test:stage3": "node test/stage3_test.js",
+    "test:stage4": "node test/stage4_test.js",
+    "test:stage56": "node test/stage5_stage6_test.js",
+    "test:stage78": "node test/stage7_stage8_test.js",
+    "test:stage910": "node test/stage9_stage10_test.js",
+    "test": "node test/stage3_test.js && node test/stage4_test.js && node test/stage5_stage6_test.js && node test/stage7_stage8_test.js && node test/stage9_stage10_test.js"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "better-sqlite3": "^13.0.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.1",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "pdfkit": "^0.15.1",
+    "zod": "^3.24.1"
+  },
+  "overrides": {
+    "tar": "^7.5.3"
+  }
+}

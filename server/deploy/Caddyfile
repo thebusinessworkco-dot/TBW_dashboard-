@@ -1,0 +1,39 @@
+# ============================================================
+# Caddyfile Reverse Proxy for The Business Work Infrastructure
+# Domain: api.thebusinesswork.com
+# Compatible with existing Caddy server on Ubuntu VPS
+# ============================================================
+
+api.thebusinesswork.com {
+    # Automatic HTTPS with Let's Encrypt
+    encode zstd gzip
+
+    # Security Headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+
+    # Proxy to local Node.js API service
+    reverse_proxy localhost:3001 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+
+        # Server-Sent Events (SSE) streaming support for WhatsApp live feed
+        flush_interval -1
+    }
+
+    # Access logging
+    log {
+        output file /var/log/caddy/tbw-api.access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+    }
+}

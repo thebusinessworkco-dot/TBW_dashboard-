@@ -1,0 +1,368 @@
+{
+  "name": "The Business Work - WhatsApp AI Bot & Dashboard Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-meta",
+        "options": {}
+      },
+      "id": "1",
+      "name": "Meta WhatsApp Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 300],
+      "webhookId": "meta-whatsapp-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract incoming message details from Meta Cloud API webhook payload\nconst entry = $input.item.json.body?.entry?.[0] || $input.item.json.entry?.[0];\nconst change = entry?.changes?.[0]?.value;\nconst message = change?.messages?.[0];\nconst contact = change?.contacts?.[0];\n\nif (!message) {\n  return []; // Ignore delivery receipts or non-message events\n}\n\nlet text = '';\nif (message.type === 'text') {\n  text = message.text?.body || '';\n} else if (message.type === 'interactive') {\n  text = message.interactive?.button_reply?.title || message.interactive?.list_reply?.title || '';\n} else if (message.type === 'button') {\n  text = message.button?.text || '';\n}\n\nconst phone = message.from;\nconst contactName = contact?.profile?.name || phone;\nconst waMsgId = message.id;\n\nreturn [{\n  json: {\n    phone_number: phone,\n    contact_name: contactName,\n    wa_message_id: waMsgId,\n    message_type: message.type,\n    content: text,\n    timestamp: message.timestamp\n  }\n}];"
+      },
+      "id": "2",
+      "name": "Parse WhatsApp Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TBW_API_URL || 'http://localhost:3001' }}/api/webhook/n8n/message",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-N8N-API-KEY",
+              "value": "={{ $env.N8N_API_KEY || 'dev-n8n-key-change-in-production' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "phone_number",
+              "value": "={{ $json.phone_number }}"
+            },
+            {
+              "name": "contact_name",
+              "value": "={{ $json.contact_name }}"
+            },
+            {
+              "name": "wa_message_id",
+              "value": "={{ $json.wa_message_id }}"
+            },
+            {
+              "name": "content",
+              "value": "={{ $json.content }}"
+            },
+            {
+              "name": "direction",
+              "value": "inbound"
+            },
+            {
+              "name": "sender_type",
+              "value": "customer"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3",
+      "name": "Log Inbound to Dashboard",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.TBW_API_URL || 'http://localhost:3001' }}/api/webhook/n8n/mode/{{ $('Parse WhatsApp Message').item.json.phone_number }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-N8N-API-KEY",
+              "value": "={{ $env.N8N_API_KEY || 'dev-n8n-key-change-in-production' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4",
+      "name": "Check AI / Human Mode",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.data.mode }}",
+              "operation": "equal",
+              "value2": "ai"
+            }
+          ]
+        }
+      },
+      "id": "5",
+      "name": "Is AI Mode Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [980, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Human Takeover Guard: Bot remains completely silent.\nconsole.log(`[TBW Human Mode] Human takeover active for ${$('Parse WhatsApp Message').item.json.phone_number}. AI bot silenced.`);\nreturn [{\n  json: {\n    status: 'human_takeover_active',\n    phone_number: $('Parse WhatsApp Message').item.json.phone_number,\n    action: 'skip_ai_reply'\n  }\n}];"
+      },
+      "id": "6",
+      "name": "Stop - Human Takeover Active",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1220, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 20-Minute Session Reset & Multi-Language Detection\nconst text = $('Parse WhatsApp Message').item.json.content;\nconst now = Date.now();\n\n// Detect language preference (English, Hindi, Hinglish, Marathi)\nlet detectedLanguage = 'English';\nif (/[\\u0900-\\u097F]/.test(text)) {\n  if (/आहे|नाही|काय|करा|होय|नमस्कार/i.test(text)) {\n    detectedLanguage = 'Marathi';\n  } else {\n    detectedLanguage = 'Hindi';\n  }\n} else if (/kya|hai|aap|hum|karna|chahiye|shukriya|namaste|batao/i.test(text)) {\n  detectedLanguage = 'Hinglish';\n}\n\nreturn [{\n  json: {\n    phone_number: $('Parse WhatsApp Message').item.json.phone_number,\n    contact_name: $('Parse WhatsApp Message').item.json.contact_name,\n    user_message: text,\n    language: detectedLanguage,\n    session_active: true\n  }\n}];"
+      },
+      "id": "7",
+      "name": "Session & Language Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1220, 200]
+    },
+    {
+      "parameters": {
+        "prompt": "You are the AI Sales and Support Assistant for The Business Work (https://thebusinesswork.com). We make business simpler by building AI Sales Agents, Customer Support Bots, CRM Automation, and WhatsApp Workflows.\n\nRespond concisely, warmly, and professionally.\nLanguage to respond in: {{ $json.language }}.\nCustomer Name: {{ $json.contact_name }}.\nCustomer Message: {{ $json.user_message }}.\n\nGuide them towards scheduling a call or requesting a proposal for their business requirements.",
+        "model": "gemini-1.5-flash",
+        "options": {
+          "temperature": 0.4
+        }
+      },
+      "id": "8",
+      "name": "Google Gemini Agent",
+      "type": "n8n-nodes-base.googleGemini",
+      "typeVersion": 1,
+      "position": [1460, 200]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEETS_SPREADSHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Phone": "={{ $('Parse WhatsApp Message').item.json.phone_number }}",
+            "Name": "={{ $('Parse WhatsApp Message').item.json.contact_name }}",
+            "Message": "={{ $('Parse WhatsApp Message').item.json.content }}",
+            "Language": "={{ $('Session & Language Filter').item.json.language }}",
+            "CapturedAt": "={{ new Date().toISOString() }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "9",
+      "name": "Google Sheets Lead Capture",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1700, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $env.WA_PHONE_NUMBER_ID }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.WA_ACCESS_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"recipient_type\": \"individual\",\n  \"to\": \"{{ $('Parse WhatsApp Message').item.json.phone_number }}\",\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": \"{{ $json.text || $json.content || 'Hello! Thank you for contacting The Business Work. Our team will get back to you.' }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "10",
+      "name": "Send WhatsApp Reply (Meta)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1940, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TBW_API_URL || 'http://localhost:3001' }}/api/webhook/n8n/message",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-N8N-API-KEY",
+              "value": "={{ $env.N8N_API_KEY || 'dev-n8n-key-change-in-production' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "phone_number",
+              "value": "={{ $('Parse WhatsApp Message').item.json.phone_number }}"
+            },
+            {
+              "name": "content",
+              "value": "={{ $('Google Gemini Agent').item.json.text || $('Google Gemini Agent').item.json.content }}"
+            },
+            {
+              "name": "direction",
+              "value": "outbound"
+            },
+            {
+              "name": "sender_type",
+              "value": "ai"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "11",
+      "name": "Log AI Reply to Dashboard",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2180, 200]
+    }
+  ],
+  "connections": {
+    "Meta WhatsApp Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse WhatsApp Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse WhatsApp Message": {
+      "main": [
+        [
+          {
+            "node": "Log Inbound to Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Inbound to Dashboard": {
+      "main": [
+        [
+          {
+            "node": "Check AI / Human Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check AI / Human Mode": {
+      "main": [
+        [
+          {
+            "node": "Is AI Mode Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is AI Mode Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Session & Language Filter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Stop - Human Takeover Active",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session & Language Filter": {
+      "main": [
+        [
+          {
+            "node": "Google Gemini Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Agent": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets Lead Capture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets Lead Capture": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Reply (Meta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Reply (Meta)": {
+      "main": [
+        [
+          {
+            "node": "Log AI Reply to Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
