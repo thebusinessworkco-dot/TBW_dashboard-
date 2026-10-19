@@ -6,13 +6,16 @@ const router = Router()
 router.get('/', async (req, res) => {
   let dbStatus = 'ok'
   let dbTime = null
+  let dbError = null
 
   try {
     const start = Date.now()
-    const result = await query('SELECT NOW() as now, 1 as ok')
+    await query('SELECT NOW() as now, 1 as ok')
     dbTime = Date.now() - start
   } catch (err) {
     dbStatus = 'error'
+    dbError = err.message
+    console.error('Health check DB error:', err.message, err.code)
   }
 
   const isHealthy = dbStatus === 'ok'
@@ -27,7 +30,8 @@ router.get('/', async (req, res) => {
       driver: 'pg-pool',
       target: 'supabase-postgres',
       status: dbStatus,
-      latency_ms: dbTime
+      latency_ms: dbTime,
+      ...(dbError ? { error: dbError } : {})
     },
     timestamp: new Date().toISOString()
   })

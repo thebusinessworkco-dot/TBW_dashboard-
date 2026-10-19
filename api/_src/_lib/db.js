@@ -113,12 +113,20 @@ export function buildPgPoolConfig(databaseUrl) {
   const parsed = parseConnectionString(cleanUrl)
   const sslConfig = getPostgresSslConfig(databaseUrl)
 
+  let user = parsed.user
+  if (parsed.host && parsed.host.includes('pooler.supabase.com') && user === 'postgres') {
+    const projectRef = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').match(/https:\/\/([a-z0-9]+)\.supabase\.co/i)?.[1] || 'fbyyjmxrkizlpmxakkdo'
+    if (projectRef) {
+      user = `postgres.${projectRef}`
+    }
+  }
+
   const config = {
-    user: parsed.user,
+    user,
     password: parsed.password,
     host: parsed.host,
     port: parsed.port ? parseInt(parsed.port, 10) : 5432,
-    database: parsed.database || parsed.user || 'postgres',
+    database: parsed.database || 'postgres',
     ssl: sslConfig,
     max: parseInt(optionalEnv('PG_POOL_MAX', '2'), 10),
     connectionTimeoutMillis: 8000,
