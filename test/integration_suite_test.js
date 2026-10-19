@@ -3,7 +3,7 @@ import http from 'http'
 import crypto from 'crypto'
 import { app } from '../api/index.js'
 import { googleSheetsService } from '../api/services/googleSheets.js'
-import { getPostgresSslConfig, buildPgPoolConfig } from '../database/migrate_data.js'
+import { getPostgresSslConfig, buildPgPoolConfig, verifyPostgresForeignKeys } from '../database/migrate_data.js'
 
 process.env.NODE_ENV = 'test'
 process.env.N8N_API_KEY = 'test-verified-n8n-key-9988'
@@ -316,6 +316,33 @@ async function runIntegrationSuite() {
       
       assert.strictEqual(ssl.rejectUnauthorized, true)
       assert.ok(ssl.ca.length > 100)
+    })
+
+    await test('Migration Verification: verifyPostgresForeignKeys function exported and validates schema', async () => {
+      assert.strictEqual(typeof verifyPostgresForeignKeys, 'function')
+      // Simulated mock client
+      const mockClient = {
+        query: async (sql) => {
+          if (sql.includes('information_schema.table_constraints')) {
+            return {
+              rows: [{
+                constraint_name: 'fk_invoices_client',
+                table_name: 'invoices',
+                column_name: 'client_id',
+                foreign_table_name: 'clients',
+                foreign_column_name: 'id'
+              }]
+            }
+          }
+          if (sql.includes('orphaned')) {
+            return { rows: [{ c: 0 }] }
+          }
+          return { rows: [{ c: 0 }] }
+        }
+      }
+      const violations = await verifyPostgresForeignKeys(mockClient)
+      assert.ok(Array.isArray(violations))
+      assert.strictEqual(violations.length, 0)
     })
 
   } finally {

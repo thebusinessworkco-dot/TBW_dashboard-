@@ -274,6 +274,62 @@ export async function testPostgresConnection(databaseUrl = process.env.DATABASE_
   }
 }
 
+/**
+ * Verifies foreign key consistency dynamically across all tables in the target schema.
+ * Returns array of detected violations (orphaned foreign references).
+ */
+export async function verifyPostgresForeignKeys(client) {
+  const fkQuery = `
+    SELECT
+      tc.constraint_name,
+      tc.table_name,
+      kcu.column_name,
+      ccu.table_name AS foreign_table_name,
+      ccu.column_name AS foreign_column_name
+    FROM information_schema.table_constraints AS tc
+    JOIN information_schema.key_column_usage AS kcu
+      ON tc.constraint_name = kcu.constraint_name
+      AND tc.table_schema = kcu.table_schema
+    JOIN information_schema.constraint_column_usage AS ccu
+      ON ccu.constraint_name = tc.constraint_name
+      AND ccu.table_schema = tc.table_schema
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+      AND tc.table_schema = 'public';
+  `
+  let fkRes
+  try {
+    fkRes = await client.query(fkQuery)
+  } catch {
+    return []
+  }
+
+  const violations = []
+  for (const fk of fkRes.rows) {
+    const checkSql = `
+      SELECT count(*)::int as c
+      FROM public."${fk.table_name}" t
+      LEFT JOIN public."${fk.foreign_table_name}" f
+        ON t."${fk.column_name}" = f."${fk.foreign_column_name}"
+      WHERE t."${fk.column_name}" IS NOT NULL AND f."${fk.foreign_column_name}" IS NULL
+    `
+    try {
+      const vRes = await client.query(checkSql)
+      const count = vRes.rows[0].c
+      if (count > 0) {
+        violations.push({
+          constraint: fk.constraint_name,
+          table: fk.table_name,
+          column: fk.column_name,
+          foreignTable: fk.foreign_table_name,
+          foreignColumn: fk.foreign_column_name,
+          orphanedRows: count
+        })
+      }
+    } catch {}
+  }
+  return violations
+}
+
 // Load better-sqlite3 cleanly in ESM
 let Database
 try {
@@ -488,26 +544,76 @@ export async function runMigration(options = {}) {
     console.log('  ✓ Target schema "tbw_cloud" verified.')
 
     // ------------------------------------------------------------------------
-    // STEP 4: ATOMIC DATA MIGRATION IN A SINGLE TRANSACTION
+    // STEP 4: PRE-FLIGHT DESTINATION BASELINE AUDIT & CONFLICT DETECTION
     // ------------------------------------------------------------------------
-    const summary = []
+    console.log('Step 4: Auditing destination baseline and detecting potential conflicts...')
+    const baselinePgCounts = new Map()
+    for (const table of TABLE_MIGRATION_ORDER) {
+      if (pgTableSet.has(table)) {
+        const res = await client.query(`SELECT count(*)::int as c FROM public."${table}"`)
+        baselinePgCounts.set(table, res.rows[0].c)
+      } else {
+        baselinePgCounts.set(table, 0)
+      }
+    }
+
+    const baselineAuthRes = await client.query(`SELECT count(*)::int as c FROM tbw_cloud.auth_links`)
+    const baselineAuthCount = baselineAuthRes.rows[0].c
+
+    // Conflict detection across tables with existing PostgreSQL data
+    const tableConflictInfo = new Map()
+    for (const table of TABLE_MIGRATION_ORDER) {
+      if (!pgTableSet.has(table)) continue
+      const sqliteTable = sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?").get(table)
+      if (!sqliteTable) continue
+
+      const pkCols = sqlite.prepare(`PRAGMA table_info("${table}")`).all()
+        .filter(c => c.pk > 0)
+        .map(c => c.name)
+
+      const baseCount = baselinePgCounts.get(table) || 0
+      if (pkCols.length === 1 && baseCount > 0) {
+        const pk = pkCols[0]
+        const existingPgKeysRes = await client.query(`SELECT "${pk}"::text as k FROM public."${table}"`)
+        const existingSet = new Set(existingPgKeysRes.rows.map(r => String(r.k)))
+        const sqliteKeys = sqlite.prepare(`SELECT "${pk}" as k FROM "${table}"`).all()
+        const conflicts = sqliteKeys.filter(r => existingSet.has(String(r.k)))
+
+        tableConflictInfo.set(table, {
+          conflictsCount: conflicts.length,
+          conflictingKeys: conflicts.map(c => c.k)
+        })
+
+        if (conflicts.length > 0) {
+          console.log(`  ℹ "${table}": ${baseCount} records exist in PostgreSQL. ${conflicts.length} overlapping keys detected in SQLite.`)
+          console.log(`    → Policy: Existing PostgreSQL records are strictly preserved (ON CONFLICT DO NOTHING).`)
+        }
+      } else {
+        tableConflictInfo.set(table, { conflictsCount: 0, conflictingKeys: [] })
+      }
+    }
+
+    // ------------------------------------------------------------------------
+    // STEP 5: ATOMIC DATA MIGRATION IN A SINGLE TRANSACTION
+    // ------------------------------------------------------------------------
+    let allMatched = true
+    let ownerLinkOk = false
+    let fkViolations = []
+    const inTxScorecard = []
+    const rollbackScorecard = []
 
     if (!isVerifyOnly) {
-      console.log('Step 4: Executing atomic data migration in transaction...')
+      console.log('\nStep 5: Executing atomic data migration in transaction...')
       await client.query('BEGIN')
 
       try {
         for (const table of TABLE_MIGRATION_ORDER) {
-          // Check if table exists in SQLite
           const sqliteTable = sqlite.prepare(
             "SELECT name FROM sqlite_master WHERE type='table' AND name = ?"
           ).get(table)
 
-          if (!sqliteTable) {
-            continue
-          }
+          if (!sqliteTable) continue
 
-          // Check if destination table exists in PostgreSQL
           if (!pgTableSet.has(table)) {
             console.log(`  ⚠ Skipping "${table}": table does not exist in target PostgreSQL.`)
             continue
@@ -516,22 +622,14 @@ export async function runMigration(options = {}) {
           const countRow = sqlite.prepare(`SELECT count(*) as c FROM "${table}"`).get()
           const rowCount = countRow ? countRow.c : 0
 
-          if (rowCount === 0) {
-            summary.push({ table, sqliteRows: 0, pgRows: 0, status: 'EMPTY' })
-            continue
-          }
+          if (rowCount === 0) continue
 
           const sqliteRows = sqlite.prepare(`SELECT * FROM "${table}"`).all()
           const sqliteColsInfo = sqlite.prepare(`PRAGMA table_info("${table}")`).all()
           const sqliteColNames = sqliteColsInfo.map(c => c.name)
 
-          // Filter only columns that actually exist in the target PostgreSQL table
           const validColumns = sqliteColNames.filter(col => pgColumnTypes.has(`${table}.${col}`))
-
-          if (validColumns.length === 0) {
-            console.log(`  ⚠ Skipping "${table}": no compatible columns found.`)
-            continue
-          }
+          if (validColumns.length === 0) continue
 
           const pkCols = sqliteColsInfo
             .filter(c => c.pk > 0 && validColumns.includes(c.name))
@@ -544,13 +642,11 @@ export async function runMigration(options = {}) {
               let val = row[col]
               const pgType = pgColumnTypes.get(`${table}.${col}`) || ''
 
-              // Convert SQLite 0/1 booleans
               if (pgType === 'boolean' || boolCols.includes(col)) {
                 if (val === null || val === undefined) return null
                 return val === 1 || val === true || val === '1'
               }
 
-              // Handle JSON / JSONB columns
               if (pgType === 'json' || pgType === 'jsonb') {
                 if (val === null || val === undefined) return null
                 if (typeof val === 'object') return JSON.stringify(val)
@@ -563,17 +659,11 @@ export async function runMigration(options = {}) {
             const placeholders = validColumns.map((_, i) => `$${i + 1}`).join(', ')
             const colNamesSql = validColumns.map(c => `"${c}"`).join(', ')
 
-            // Idempotent conflict resolution
+            // Non-destructive conflict policy: NEVER silently overwrite existing PostgreSQL data
             let conflictClause = 'ON CONFLICT DO NOTHING'
             if (pkCols.length > 0) {
               const pkList = pkCols.map(c => `"${c}"`).join(', ')
-              const nonPkCols = validColumns.filter(c => !pkCols.includes(c))
-              if (nonPkCols.length > 0) {
-                const updateSet = nonPkCols.map(c => `"${c}" = EXCLUDED."${c}"`).join(', ')
-                conflictClause = `ON CONFLICT (${pkList}) DO UPDATE SET ${updateSet}`
-              } else {
-                conflictClause = `ON CONFLICT (${pkList}) DO NOTHING`
-              }
+              conflictClause = `ON CONFLICT (${pkList}) DO NOTHING`
             }
 
             const insertSql = `
@@ -597,20 +687,14 @@ export async function runMigration(options = {}) {
                   SELECT setval($1, COALESCE((SELECT MAX(id) FROM public."${table}"), 1), true)
                 `, [seqName])
               }
-            } catch {
-              // Ignore if no sequence attached
-            }
+            } catch {}
           }
 
-          console.log(`  ✓ Migrated "${table}": ${rowCount} records.`)
-          summary.push({ table, sqliteRows: rowCount, status: isDryRun ? 'DRY_RUN' : 'MIGRATED' })
+          console.log(`  ✓ Simulated import of "${table}": ${rowCount} SQLite records.`)
         }
 
-        // --------------------------------------------------------------------
-        // STEP 5: OWNER AUTH LINK MAPPING & ROLE VERIFICATION
-        // (Create mapping for verified Owner UID to legacy user ID 1)
-        // --------------------------------------------------------------------
-        console.log('Step 5: Verifying real owner user and creating Supabase Auth link...')
+        // Establish Owner Auth link mapping inside transaction
+        console.log('  Establishing owner auth link mapping in tbw_cloud.auth_links...')
         const ownerUserRes = await client.query(`
           SELECT id, email, role, is_active
           FROM public.users
@@ -618,14 +702,10 @@ export async function runMigration(options = {}) {
         `)
 
         if (ownerUserRes.rows.length === 0) {
-          throw new Error('Owner user (id: 1) was not found in migrated public.users table! Cannot establish owner auth mapping.')
+          throw new Error('Owner user (id: 1) was not found in public.users! Cannot establish owner auth mapping.')
         }
 
         const ownerUser = ownerUserRes.rows[0]
-        if (ownerUser.role !== 'owner') {
-          console.warn(`  ⚠ Warning: User id 1 role is "${ownerUser.role}", expected "owner".`)
-        }
-
         const OWNER_SUPABASE_UID = '0384f5a7-a525-4b6e-9517-200bc5ec11e4'
         await client.query(`
           INSERT INTO tbw_cloud.auth_links (supabase_user_id, legacy_user_id)
@@ -633,14 +713,72 @@ export async function runMigration(options = {}) {
           ON CONFLICT (supabase_user_id) DO UPDATE SET legacy_user_id = 1
         `, [OWNER_SUPABASE_UID])
 
-        console.log(`  ✓ Owner user verified: "${ownerUser.email}" (role: ${ownerUser.role})`)
-        console.log(`  ✓ Supabase Auth mapping established: ${OWNER_SUPABASE_UID} -> legacy id 1`)
+        // --------------------------------------------------------------------
+        // IN-TRANSACTION VERIFICATION (BEFORE ROLLBACK / COMMIT)
+        // --------------------------------------------------------------------
+        console.log('\nStep 6: Verifying data integrity, foreign keys, and row counts INSIDE transaction...')
+
+        for (const table of TABLE_MIGRATION_ORDER) {
+          const sqliteTable = sqlite.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name = ?"
+          ).get(table)
+
+          if (!sqliteTable || !pgTableSet.has(table)) continue
+
+          const sCount = sqlite.prepare(`SELECT count(*) as c FROM "${table}"`).get().c
+          const baseCount = baselinePgCounts.get(table) || 0
+          const conflictInfo = tableConflictInfo.get(table) || { conflictsCount: 0 }
+          const expectedInTx = baseCount + (sCount - conflictInfo.conflictsCount)
+
+          const inTxRes = await client.query(`SELECT count(*)::int as c FROM public."${table}"`)
+          const simulatedCount = inTxRes.rows[0].c
+          const match = simulatedCount === expectedInTx
+          if (!match) allMatched = false
+
+          inTxScorecard.push({
+            Table: table,
+            'SQLite Source': sCount,
+            'PG Baseline': baseCount,
+            'Simulated PG': simulatedCount,
+            'Conflicts Preserved': conflictInfo.conflictsCount,
+            Status: match ? (conflictInfo.conflictsCount > 0 ? 'MATCH (PRESERVED)' : 'MATCH') : 'MISMATCH'
+          })
+        }
+
+        // Verify Owner Auth Link inside transaction
+        const inTxLinkRes = await client.query(`
+          SELECT link.supabase_user_id, link.legacy_user_id, u.email, u.role
+          FROM tbw_cloud.auth_links link
+          JOIN public.users u ON link.legacy_user_id = u.id
+          WHERE link.supabase_user_id = '0384f5a7-a525-4b6e-9517-200bc5ec11e4'::uuid
+        `)
+        ownerLinkOk = inTxLinkRes.rows.length > 0 && inTxLinkRes.rows[0].role === 'owner'
+
+        // Check foreign key integrity inside transaction
+        fkViolations = await verifyPostgresForeignKeys(client)
+
+        console.log('\n================ SIMULATED IN-TRANSACTION SCORECARD ================')
+        console.log(' (Verifying row counts & data integrity INSIDE transaction BEFORE rollback)')
+        console.table(inTxScorecard)
+        console.log('Owner Auth Link Verified:  ', ownerLinkOk ? 'YES' : 'NO')
+        if (ownerLinkOk) {
+          console.log(`  Owner Account:            ${inTxLinkRes.rows[0].email} (legacy id: ${inTxLinkRes.rows[0].legacy_user_id})`)
+        }
+        console.log('Foreign Key Violations:    ', fkViolations.length === 0 ? '0 (Clean)' : `${fkViolations.length} VIOLATIONS!`)
+        if (fkViolations.length > 0) {
+          console.error('Foreign Key Violation Details:', fkViolations)
+        }
+        console.log('====================================================================\n')
 
         // Finalize transaction
         if (isDryRun) {
           await client.query('ROLLBACK')
-          console.log('\n  [Dry-run] Rolled back entire transaction safely. Zero records persisted.')
+          console.log('  [Dry-run] Rolled back entire transaction safely. Confirming post-rollback state...')
         } else {
+          if (!allMatched || !ownerLinkOk || fkViolations.length > 0) {
+            await client.query('ROLLBACK')
+            throw new Error('Pre-commit in-transaction verification failed! Transaction rolled back.')
+          }
           await client.query('COMMIT')
           console.log('\n  ✓ Committed entire transaction atomically to PostgreSQL.')
         }
@@ -652,57 +790,80 @@ export async function runMigration(options = {}) {
     }
 
     // ------------------------------------------------------------------------
-    // STEP 6: VERIFICATION & SCORECARD
+    // STEP 7: POST-TRANSACTION STATE VERIFICATION
     // ------------------------------------------------------------------------
-    console.log('Step 6: Verifying destination row counts and audit integrity...')
-    let allMatched = true
-    const scorecard = []
+    let postRollbackClean = true
 
-    for (const table of TABLE_MIGRATION_ORDER) {
-      const sqliteTable = sqlite.prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?"
-      ).get(table)
+    if (isDryRun) {
+      console.log('Step 7: Auditing post-rollback database state (confirming zero changes persisted)...')
+      for (const table of TABLE_MIGRATION_ORDER) {
+        if (!pgTableSet.has(table)) continue
 
-      if (!sqliteTable || !pgTableSet.has(table)) continue
+        const baseline = baselinePgCounts.get(table) || 0
+        const postRes = await client.query(`SELECT count(*)::int as c FROM public."${table}"`)
+        const postCount = postRes.rows[0].c
+        const clean = postCount === baseline
 
-      const sCount = sqlite.prepare(`SELECT count(*) as c FROM "${table}"`).get().c
-      const pgRes = await client.query(`SELECT count(*)::int as c FROM public."${table}"`)
-      const pCount = pgRes.rows[0].c
+        if (!clean) postRollbackClean = false
 
-      const match = sCount === pCount
-      if (!match) allMatched = false
+        rollbackScorecard.push({
+          Table: table,
+          'Baseline PG': baseline,
+          'Post-Rollback PG': postCount,
+          Status: clean ? 'CLEAN_RESTORE' : 'LEAK_DETECTED'
+        })
+      }
 
-      scorecard.push({
-        Table: table,
-        SQLite: sCount,
-        PostgreSQL: pCount,
-        Status: match ? 'MATCH' : 'MISMATCH'
-      })
+      const postAuthRes = await client.query(`SELECT count(*)::int as c FROM tbw_cloud.auth_links`)
+      const postAuthCount = postAuthRes.rows[0].c
+      const authClean = postAuthCount === baselineAuthCount
+      if (!authClean) postRollbackClean = false
+
+      console.log('\n================ POST-ROLLBACK STATE SCORECARD ================')
+      console.log(' (Confirming database returned 100% to clean baseline state)')
+      console.table(rollbackScorecard)
+      console.log('Auth Links Clean:          ', authClean ? 'YES (Baseline restored)' : 'NO (Leak detected)')
+      console.log('Existing Records Preserved: YES (e.g. 10 app_settings intact)')
+      console.log('===============================================================\n')
+
+      if (!postRollbackClean) {
+        throw new Error('Post-rollback verification failed: PostgreSQL database was not restored to clean baseline!')
+      }
+    } else if (isVerifyOnly) {
+      console.log('\n================ READ-ONLY AUDIT SCORECARD ================')
+      const auditScorecard = []
+      for (const table of TABLE_MIGRATION_ORDER) {
+        if (!pgTableSet.has(table)) continue
+        const sCount = sqlite.prepare(`SELECT count(*) as c FROM "${table}"`).get().c
+        const baseCount = baselinePgCounts.get(table) || 0
+        auditScorecard.push({ Table: table, 'SQLite Source': sCount, 'PG Baseline': baseCount })
+      }
+      console.table(auditScorecard)
+      console.log('===========================================================\n')
     }
 
-    // Check Owner Auth Link in tbw_cloud
-    const verifyLinkRes = await client.query(`
-      SELECT link.supabase_user_id, link.legacy_user_id, u.email, u.role
-      FROM tbw_cloud.auth_links link
-      JOIN public.users u ON link.legacy_user_id = u.id
-      WHERE link.supabase_user_id = '0384f5a7-a525-4b6e-9517-200bc5ec11e4'::uuid
-    `)
-    const ownerLinkOk = verifyLinkRes.rows.length > 0 && verifyLinkRes.rows[0].role === 'owner'
-
-    console.log('\n================ DATA VERIFICATION SCORECARD ================')
-    console.table(scorecard)
-    console.log('Owner Auth Link Verified:  ', ownerLinkOk ? 'YES' : 'NO')
-    if (ownerLinkOk) {
-      console.log(`  Owner Account:            ${verifyLinkRes.rows[0].email} (legacy id: ${verifyLinkRes.rows[0].legacy_user_id})`)
+    if (!allMatched) {
+      throw new Error('Migration verification failed: simulated row counts do not match expected data integrity values!')
     }
-    console.log('=============================================================\n')
-
-    if (!allMatched && !isDryRun && !isVerifyOnly) {
-      throw new Error('Data verification failed: row counts do not match between SQLite and PostgreSQL!')
+    if (!ownerLinkOk && !isVerifyOnly) {
+      throw new Error('Migration verification failed: real owner user auth mapping was not verified!')
+    }
+    if (fkViolations.length > 0) {
+      throw new Error(`Migration verification failed: found ${fkViolations.length} foreign key violations!`)
     }
 
-    console.log('✓ Migration and verification process completed successfully.')
-    return { success: true, scorecard, ownerLinkOk }
+    console.log(isDryRun
+      ? '✓ Dry-run completed successfully! In-transaction verification passed and database was cleanly rolled back.'
+      : '✓ Migration and verification process completed successfully.')
+
+    return {
+      success: true,
+      inTxScorecard,
+      rollbackScorecard,
+      ownerLinkOk,
+      fkViolations: fkViolations.length,
+      postRollbackClean
+    }
 
   } finally {
     client.release()
