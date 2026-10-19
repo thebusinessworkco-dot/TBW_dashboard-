@@ -1,6 +1,9 @@
 import { supabase } from './supabase.js'
 
-const API_BASE = import.meta.env.VITE_API_URL || ''
+// In Vercel deployment, the API is serverless on the same origin.
+// Strictly reject legacy external VPS domain (api.thebusinesswork.com) to ensure same-origin relative fetch.
+const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim()
+const API_BASE = rawApiUrl.includes('api.thebusinesswork.com') ? '' : rawApiUrl
 
 let isRefreshing = false
 
