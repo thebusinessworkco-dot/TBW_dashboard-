@@ -1,3 +1,5 @@
+-- Reviewed safe initial schema: no dummy owner and no unverified contact details.
+-- Use ONLY after confirming the public schema has no existing dashboard tables.
 -- ==============================================================================
 -- THE BUSINESS WORK (DASHBOARD v14) - POSTGRESQL PRODUCTION & STAGING SCHEMA
 -- Compatible with Supabase Postgres, Transaction Pooler, and Vercel Node Functions
@@ -545,14 +547,8 @@ INSERT INTO public.app_settings (key, value) VALUES
     ('company_name', 'The Business Work'),
     ('company_tagline', 'We Make Business Simpler.'),
     ('company_website', 'https://www.thebusinesswork.com'),
-    ('company_email', 'hello@thebusinesswork.com'),
-    ('company_phone', ''),
-    ('company_address', ''),
-    ('company_gstin', ''),
-    ('gst_registered', 'false'),
     ('default_currency', 'INR'),
     ('default_timezone', 'Asia/Kolkata'),
-    ('default_tax_rate', '18'),
     ('default_conversation_mode', 'ai'),
     ('invoice_prefix', 'TBW-INV'),
     ('quotation_prefix', 'TBW-QT'),
@@ -560,10 +556,43 @@ INSERT INTO public.app_settings (key, value) VALUES
     ('quotation_terms', 'This quotation is valid for the period specified. Prices are subject to change after expiry.')
 ON CONFLICT (key) DO NOTHING;
 
--- Initial owner auth link mapping (Owner UID: 0384f5a7-a525-4b6e-9517-200bc5ec11e4 -> legacy id 1)
-INSERT INTO tbw_cloud.auth_links (supabase_user_id, legacy_user_id)
-VALUES ('0384f5a7-a525-4b6e-9517-200bc5ec11e4'::uuid, 1)
-ON CONFLICT (supabase_user_id) DO NOTHING;
+-- Owner mapping intentionally deferred until the real users table has been migrated.
+-- Do not insert a placeholder user or auth link.
+
+-- SECURITY: SQL Editor-created tables are not automatically protected by RLS.
+-- Enable RLS on all dashboard business tables, with no direct-client policies.
+-- Vercel server-side DB connections can use the privileged server connection;
+-- direct browser reads/writes must remain blocked until reviewed policies exist.
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.clients ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.google_sheet_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.google_sheet_sync_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.client_notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.lead_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.message_delivery_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.conversation_notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.quick_replies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.whatsapp_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.services ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.packages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.quotations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.quotation_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.invoice_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.expenses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.appointments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.automation_integrations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.app_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public._migrations ENABLE ROW LEVEL SECURITY;
 
 -- Restrict tbw_cloud schema from anonymous or ambient access
 REVOKE ALL ON SCHEMA tbw_cloud FROM PUBLIC, anon, authenticated;
