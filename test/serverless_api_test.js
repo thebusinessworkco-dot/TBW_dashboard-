@@ -295,10 +295,30 @@ async function runTests() {
       assert.ok(authRes.error === 'INVALID_SESSION' || authRes.error === 'AUTH_FAILED')
     })
 
-    await test('Auth regression: Owner mapping constant matches verified owner UID 0384f5a7-a525-4b6e-9517-200bc5ec11e4', () => {
-      const verifiedOwnerUid = '0384f5a7-a525-4b6e-9517-200bc5ec11e4'
-      const configured = process.env.TBW_OWNER_SUPABASE_UID || '0384f5a7-a525-4b6e-9517-200bc5ec11e4'
+    await test('Auth regression: Owner mapping constant matches verified owner UID a7052b48-3ec3-4381-ac87-ade395b1186c', () => {
+      const verifiedOwnerUid = 'a7052b48-3ec3-4381-ac87-ade395b1186c'
+      const configured = process.env.TBW_OWNER_SUPABASE_UID || 'a7052b48-3ec3-4381-ac87-ade395b1186c'
       assert.strictEqual(verifiedOwnerUid, configured)
+    })
+
+    // Regression: Validation middleware with getter-only req.query (Node 24 / Express)
+    await test('Validation middleware handles getter-only query properties without TypeError', async () => {
+      const res = await fetch(`${BASE_URL}/api/audit-log?limit=8`)
+      // Should reject with 401 (not 500 TypeError)
+      assert.strictEqual(res.status, 401)
+      const data = await res.json()
+      assert.strictEqual(data.success, false)
+      assert.strictEqual(data.error.code, 'UNAUTHORIZED')
+    })
+
+    // Regression: Analytics endpoint authentication and routing
+    await test('Analytics /api/analytics/dashboard handles request without 500 routing error', async () => {
+      const res = await fetch(`${BASE_URL}/api/analytics/dashboard?range=30d`)
+      // Should reject with 401 (not 500 SQL error)
+      assert.strictEqual(res.status, 401)
+      const data = await res.json()
+      assert.strictEqual(data.success, false)
+      assert.strictEqual(data.error.code, 'UNAUTHORIZED')
     })
 
     // 10. 404 Handler

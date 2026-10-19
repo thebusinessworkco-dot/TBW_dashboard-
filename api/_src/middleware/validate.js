@@ -7,10 +7,22 @@ export function validate(schemas = {}) {
         req.body = schemas.body.parse(req.body)
       }
       if (schemas.query && req.query) {
-        req.query = schemas.query.parse(req.query)
+        const parsed = schemas.query.parse(req.query)
+        Object.defineProperty(req, 'query', {
+          value: parsed,
+          writable: true,
+          enumerable: true,
+          configurable: true
+        })
       }
       if (schemas.params && req.params) {
-        req.params = schemas.params.parse(req.params)
+        const parsed = schemas.params.parse(req.params)
+        Object.defineProperty(req, 'params', {
+          value: parsed,
+          writable: true,
+          enumerable: true,
+          configurable: true
+        })
       }
       next()
     } catch (err) {

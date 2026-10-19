@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
-import { query } from '../_lib/db.js'
+import { query, withTransaction } from '../_lib/db.js'
 import { revokeToken, getAuthClient } from '../_lib/auth.js'
 import { generateToken } from '../utils/crypto.js'
 import { logAudit } from '../utils/audit.js'
@@ -35,7 +35,7 @@ router.post('/login', loginLimiter, validate({ body: loginSchema }), async (req,
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || ''
     const userAgent = req.headers['user-agent'] || ''
 
-    const configuredOwnerUid = optionalEnv('TBW_OWNER_SUPABASE_UID', '0384f5a7-a525-4b6e-9517-200bc5ec11e4')
+    const configuredOwnerUid = optionalEnv('TBW_OWNER_SUPABASE_UID', null)
     const configuredOwnerLegacyId = parseInt(optionalEnv('TBW_OWNER_LEGACY_ID', '1'), 10)
 
     let authenticatedUser = null
@@ -64,13 +64,32 @@ router.post('/login', loginLimiter, validate({ body: loginSchema }), async (req,
             LIMIT 1
           `, [supabaseUid])
 
-          // If not in auth_links, check if it matches configured Owner UID
-          if (linkRes.rows.length === 0 && supabaseUid === configuredOwnerUid) {
-            await query(`
-              INSERT INTO tbw_cloud.auth_links (supabase_user_id, legacy_user_id)
-              VALUES ($1::uuid, $2)
-              ON CONFLICT (supabase_user_id) DO NOTHING
-            `, [supabaseUid, configuredOwnerLegacyId])
+          // If not in auth_links, check if it matches configured Owner UID (fails securely if configuredOwnerUid is missing)
+          if (linkRes.rows.length === 0 && configuredOwnerUid && supabaseUid === configuredOwnerUid) {
+            await withTransaction(async (client) => {
+              const ownerCheck = await client.query(
+                "SELECT id, email, role FROM public.users WHERE id = $1 AND role = 'owner'",
+                [configuredOwnerLegacyId]
+              )
+              if (ownerCheck.rows.length === 0) {
+                throw new Error(`Legacy owner user ${configuredOwnerLegacyId} not found with role 'owner'`)
+              }
+
+              const updateRes = await client.query(`
+                UPDATE tbw_cloud.auth_links
+                SET supabase_user_id = $1::uuid
+                WHERE legacy_user_id = $2
+                RETURNING supabase_user_id, legacy_user_id
+              `, [supabaseUid, configuredOwnerLegacyId])
+
+              if (updateRes.rows.length === 0) {
+                await client.query(`
+                  INSERT INTO tbw_cloud.auth_links (supabase_user_id, legacy_user_id)
+                  VALUES ($1::uuid, $2)
+                  ON CONFLICT (supabase_user_id) DO UPDATE SET legacy_user_id = $2
+                `, [supabaseUid, configuredOwnerLegacyId])
+              }
+            })
 
             linkRes = await query(`
               SELECT u.id, u.email, u.name, u.phone, u.role, u.avatar_url, u.is_active

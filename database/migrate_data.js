@@ -706,7 +706,7 @@ export async function runMigration(options = {}) {
         }
 
         const ownerUser = ownerUserRes.rows[0]
-        const OWNER_SUPABASE_UID = '0384f5a7-a525-4b6e-9517-200bc5ec11e4'
+        const OWNER_SUPABASE_UID = process.env.TBW_OWNER_SUPABASE_UID || 'a7052b48-3ec3-4381-ac87-ade395b1186c'
         await client.query(`
           INSERT INTO tbw_cloud.auth_links (supabase_user_id, legacy_user_id)
           VALUES ($1::uuid, 1)
@@ -750,8 +750,8 @@ export async function runMigration(options = {}) {
           SELECT link.supabase_user_id, link.legacy_user_id, u.email, u.role
           FROM tbw_cloud.auth_links link
           JOIN public.users u ON link.legacy_user_id = u.id
-          WHERE link.supabase_user_id = '0384f5a7-a525-4b6e-9517-200bc5ec11e4'::uuid
-        `)
+          WHERE link.supabase_user_id = $1::uuid
+        `, [OWNER_SUPABASE_UID])
         ownerLinkOk = inTxLinkRes.rows.length > 0 && inTxLinkRes.rows[0].role === 'owner'
 
         // Check foreign key integrity inside transaction

@@ -7,7 +7,7 @@ import { getPostgresSslConfig, buildPgPoolConfig, verifyPostgresForeignKeys } fr
 
 process.env.NODE_ENV = 'test'
 process.env.N8N_API_KEY = 'test-verified-n8n-key-9988'
-process.env.TBW_OWNER_SUPABASE_UID = '0384f5a7-a525-4b6e-9517-200bc5ec11e4'
+process.env.TBW_OWNER_SUPABASE_UID = 'a7052b48-3ec3-4381-ac87-ade395b1186c'
 process.env.TBW_OWNER_LEGACY_ID = '1'
 
 const PORT = 3299
@@ -249,7 +249,7 @@ async function runIntegrationSuite() {
     })
 
     await test('Auth: Owner UID mapping recognizes thebusinesswork.co@gmail.com', () => {
-      const ownerUid = '0384f5a7-a525-4b6e-9517-200bc5ec11e4'
+      const ownerUid = 'a7052b48-3ec3-4381-ac87-ade395b1186c'
       const configuredOwner = process.env.TBW_OWNER_SUPABASE_UID
       assert.strictEqual(ownerUid, configuredOwner)
     })

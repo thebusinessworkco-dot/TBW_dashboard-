@@ -298,18 +298,18 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
 
     // 10. Financial Timeline Chart Data (Daily / Weekly Buckets)
     const timelinePaymentsRes = await query(`
-      SELECT SUBSTRING(payment_date, 1, 10) as date, SUM(amount) as income
+      SELECT TO_CHAR(payment_date, 'YYYY-MM-DD') as date, SUM(amount) as income
       FROM payments
       WHERE status = 'confirmed' AND ${payFilter.sql}
-      GROUP BY SUBSTRING(payment_date, 1, 10)
+      GROUP BY TO_CHAR(payment_date, 'YYYY-MM-DD')
       ORDER BY date ASC
     `, payFilter.params)
 
     const timelineExpensesRes = await query(`
-      SELECT SUBSTRING(expense_date, 1, 10) as date, SUM(amount) as expense
+      SELECT TO_CHAR(expense_date, 'YYYY-MM-DD') as date, SUM(amount) as expense
       FROM expenses
       WHERE ${expFilter.sql}
-      GROUP BY SUBSTRING(expense_date, 1, 10)
+      GROUP BY TO_CHAR(expense_date, 'YYYY-MM-DD')
       ORDER BY date ASC
     `, expFilter.params)
 
