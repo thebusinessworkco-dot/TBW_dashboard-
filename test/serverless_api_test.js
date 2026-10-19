@@ -139,6 +139,38 @@ async function runTests() {
       assert.strictEqual(data.error.code, 'UNAUTHORIZED')
     })
 
+    await test('POST /api/clients/sync-sheets requires authentication (401)', async () => {
+      const res = await fetch(`${BASE_URL}/api/clients/sync-sheets`, { method: 'POST' })
+      assert.strictEqual(res.status, 401)
+      const data = await res.json()
+      assert.strictEqual(data.success, false)
+      assert.strictEqual(data.error.code, 'UNAUTHORIZED')
+    })
+
+    await test('GET /api/clients/sync-status requires authentication (401)', async () => {
+      const res = await fetch(`${BASE_URL}/api/clients/sync-status`)
+      assert.strictEqual(res.status, 401)
+      const data = await res.json()
+      assert.strictEqual(data.success, false)
+      assert.strictEqual(data.error.code, 'UNAUTHORIZED')
+    })
+
+    await test('GET /api/clients/trash requires authentication (401)', async () => {
+      const res = await fetch(`${BASE_URL}/api/clients/trash`)
+      assert.strictEqual(res.status, 401)
+      const data = await res.json()
+      assert.strictEqual(data.success, false)
+      assert.strictEqual(data.error.code, 'UNAUTHORIZED')
+    })
+
+    await test('GET /api/clients/export-csv requires authentication (401)', async () => {
+      const res = await fetch(`${BASE_URL}/api/clients/export-csv`)
+      assert.strictEqual(res.status, 401)
+      const data = await res.json()
+      assert.strictEqual(data.success, false)
+      assert.strictEqual(data.error.code, 'UNAUTHORIZED')
+    })
+
     // 6. Zod Schema Validation
     await test('POST /api/auth/login validates required fields with Zod (400)', async () => {
       const res = await fetch(`${BASE_URL}/api/auth/login`, {

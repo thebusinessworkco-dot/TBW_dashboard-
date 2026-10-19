@@ -34,9 +34,10 @@ export async function apiRequest(endpoint, options = {}) {
     error.details = data?.error?.details
 
     // Handle session expiration
-    if (res.status === 401 && (data?.error?.code === 'SESSION_EXPIRED' || data?.error?.code === 'INVALID_SESSION')) {
+    if (res.status === 401) {
       localStorage.removeItem('tbw_token')
-      window.dispatchEvent(new CustomEvent('tbw_auth_expired', { detail: { code: data?.error?.code } }))
+      delete window.__tbw_supabase_token
+      window.dispatchEvent(new CustomEvent('tbw_auth_expired', { detail: { code: data?.error?.code || 'UNAUTHORIZED' } }))
     }
 
     throw error

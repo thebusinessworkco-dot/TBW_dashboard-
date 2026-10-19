@@ -75,12 +75,51 @@ CREATE TABLE IF NOT EXISTS public.clients (
     next_followup    TIMESTAMPTZ,
     last_contacted   TIMESTAMPTZ,
     wa_contact_id    TEXT,
+    _tbw_id          UUID DEFAULT gen_random_uuid() UNIQUE,
+    google_sheet_row_id TEXT,
+    google_sheet_synced_at TIMESTAMPTZ,
+    is_deleted       BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at       TIMESTAMPTZ,
+    deleted_by       BIGINT REFERENCES public.users(id) ON DELETE SET NULL,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_phone ON public.clients(whatsapp_phone) WHERE whatsapp_phone IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_clients_status ON public.clients(lifecycle_status);
 CREATE INDEX IF NOT EXISTS idx_clients_assigned ON public.clients(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_clients_is_deleted ON public.clients(is_deleted);
+CREATE INDEX IF NOT EXISTS idx_clients_sheet_row ON public.clients(google_sheet_row_id);
+
+CREATE TABLE IF NOT EXISTS public.google_sheet_config (
+    id                      SERIAL PRIMARY KEY,
+    spreadsheet_id          TEXT NOT NULL,
+    sheet_name              TEXT NOT NULL DEFAULT 'Leads',
+    header_row              INTEGER NOT NULL DEFAULT 1,
+    auto_sync_enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+    sync_interval_minutes   INTEGER NOT NULL DEFAULT 15,
+    last_sync_at            TIMESTAMPTZ,
+    last_sync_status        TEXT DEFAULT 'idle',
+    last_error              TEXT,
+    column_mapping          JSONB NOT NULL DEFAULT '{"_tbw_id":"TBW_ID","name":"Name","whatsapp_phone":"Phone","email":"Email","business_name":"Business Name","requirement":"Requirement","budget":"Budget","lifecycle_status":"Status","next_followup":"Follow Up","created_at":"CapturedAt"}'::jsonb,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.google_sheet_sync_logs (
+    id              BIGSERIAL PRIMARY KEY,
+    sync_type       TEXT NOT NULL CHECK(sync_type IN ('inbound', 'outbound', 'bidirectional')),
+    status          TEXT NOT NULL CHECK(status IN ('success', 'partial', 'failed', 'config_required')),
+    rows_imported   INTEGER NOT NULL DEFAULT 0,
+    rows_exported   INTEGER NOT NULL DEFAULT 0,
+    rows_updated    INTEGER NOT NULL DEFAULT 0,
+    details         JSONB DEFAULT '{}'::jsonb,
+    error_message   TEXT,
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at    TIMESTAMPTZ,
+    triggered_by    BIGINT REFERENCES public.users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sheet_logs_started ON public.google_sheet_sync_logs(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sheet_logs_status ON public.google_sheet_sync_logs(status);
 
 CREATE TABLE IF NOT EXISTS public.client_notes (
     id              BIGSERIAL PRIMARY KEY,

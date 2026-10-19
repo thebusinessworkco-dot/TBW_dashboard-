@@ -139,30 +139,30 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [])
 
-  /* ---------- data ---------- */
-  const [user, setUser] = useState(seed.USER)
-  const [currency, setCurrency] = useState('USD')
-  const [balance, setBalance] = useState(seed.BALANCE_USD)
-  const [wallets, setWallets] = useState(seed.WALLETS)
-  const [activities, setActivities] = useState(seed.ACTIVITIES)
-  const [cards, setCards] = useState(seed.CARDS)
-  const [spend, setSpend] = useState(seed.SPEND)
-  const [notifications, setNotifications] = useState(seed.NOTIFICATIONS)
-  const [contacts, setContacts] = useState(seed.CONTACTS)
-  const [conversations, setConversations] = useState(seed.CONVERSATIONS)
-  const [invoices, setInvoices] = useState(seed.INVOICES)
-  const [events, setEvents] = useState(seed.EVENTS)
-  const [goals, setGoals] = useState(seed.GOALS)
-  const [autosave, setAutosave] = useState(seed.AUTOSAVE)
-  const [offers, setOffers] = useState(seed.OFFERS)
-  const [points, setPoints] = useState({ total: 12480, log: seed.POINTS_LOG })
-  const [banks, setBanks] = useState(seed.BANKS)
-  const [sessions, setSessions] = useState(seed.SESSIONS)
+  /* ---------- data (zero dummy data in production) ---------- */
+  const [user, setUser] = useState(null)
+  const [currency, setCurrency] = useState('INR')
+  const [balance, setBalance] = useState(0)
+  const [wallets, setWallets] = useState([])
+  const [activities, setActivities] = useState([])
+  const [cards, setCards] = useState([])
+  const [spend, setSpend] = useState({ spent: 0, limit: 0 })
+  const [notifications, setNotifications] = useState([])
+  const [contacts, setContacts] = useState([])
+  const [conversations, setConversations] = useState([])
+  const [invoices, setInvoices] = useState([])
+  const [events, setEvents] = useState([])
+  const [goals, setGoals] = useState([])
+  const [autosave, setAutosave] = useState([])
+  const [offers, setOffers] = useState([])
+  const [points, setPoints] = useState({ total: 0, log: [] })
+  const [banks, setBanks] = useState([])
+  const [sessions, setSessions] = useState([])
   const [security, setSecurity] = useState({ twoFactor: true, biometric: true, alerts: true })
   const [prefs, setPrefs] = useState({
     language: 'English (US)',
-    timezone: 'Asia/Dhaka (GMT+6)',
-    dateFormat: '17 Apr, 2026',
+    timezone: 'Asia/Kolkata (GMT+5:30)',
+    dateFormat: 'DD MMM, YYYY',
     weekStart: 'Monday',
     notify: {
       emailTx: true,
@@ -192,8 +192,8 @@ export default function App() {
   const [modal, setModal] = useState(null)
   const openModal = useCallback((type, payload = {}) => setModal({ type, payload }), [])
   const closeModal = useCallback(() => setModal(null), [])
-  const [paletteOpen, setPaletteOpen] = useState(false)
   const [signedOut, setSignedOut] = useState(() => !localStorage.getItem('tbw_token'))
+  const [authChecking, setAuthChecking] = useState(() => !!localStorage.getItem('tbw_token'))
 
   useEffect(() => {
     const key = (e) => {
@@ -265,19 +265,36 @@ export default function App() {
 
   /* Check existing authentication on load */
   useEffect(() => {
+    const token = localStorage.getItem('tbw_token')
+    if (!token) {
+      setSignedOut(true)
+      setAuthChecking(false)
+      setUser(null)
+      return
+    }
+
     api.get('/api/auth/me')
       .then(res => {
         if (res.success && res.data?.user) {
-          setUser(u => ({ ...u, ...res.data.user, first: res.data.user.name.split(' ')[0] }))
+          setUser(u => ({ ...(u || {}), ...res.data.user, first: res.data.user.name.split(' ')[0] }))
           setSignedOut(false)
+        } else {
+          setSignedOut(true)
+          setUser(null)
         }
       })
       .catch(() => {
         setSignedOut(true)
+        setUser(null)
+      })
+      .finally(() => {
+        setAuthChecking(false)
       })
 
     const handleAuthExpired = () => {
       setSignedOut(true)
+      setUser(null)
+      setAuthChecking(false)
       toast('Session Expired', 'Your session has expired. Please log in again.', { icon: 'lock' })
     }
     window.addEventListener('tbw_auth_expired', handleAuthExpired)
@@ -386,7 +403,35 @@ export default function App() {
 
   const page = (VIEWS.find((v) => v.id === view) ?? VIEWS[0]).page
 
-  if (signedOut) {
+  if (authChecking) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'var(--bg, #0b0f19)',
+        color: 'var(--fg, #f8fafc)',
+        fontFamily: 'Inter, -apple-system, sans-serif'
+      }}>
+        <div style={{
+          width: 44,
+          height: 44,
+          border: '3px solid rgba(255,255,255,0.1)',
+          borderTopColor: '#ff5c00',
+          borderRadius: '50%',
+          animation: 'spin 0.8s linear infinite'
+        }} />
+        <div style={{ marginTop: 16, fontSize: '0.9rem', color: '#94a3b8', letterSpacing: '0.05em' }}>
+          VERIFYING SESSION...
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    )
+  }
+
+  if (signedOut || !user) {
     return <LoginForm onLoginSuccess={handleLoginSuccess} />
   }
 
