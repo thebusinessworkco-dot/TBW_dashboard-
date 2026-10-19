@@ -6,6 +6,7 @@ import { cloudLogin } from '../lib/cloud-auth'
 export default function LoginForm({ onLoginSuccess }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
 
@@ -58,15 +59,17 @@ export default function LoginForm({ onLoginSuccess }) {
 
         <form onSubmit={handleSubmit} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '6px' }}>
           <div style={{ textAlign: 'left' }}>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--ink)' }}>
+            <label htmlFor="login-email" style={{ fontSize: '12px', fontWeight: 600, color: 'var(--ink)' }}>
               Work Email
             </label>
             <input
+              id="login-email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="admin@thebusinesswork.com"
               required
+              autoComplete="email"
               style={{
                 width: '100%',
                 padding: '10px 14px',
@@ -81,26 +84,54 @@ export default function LoginForm({ onLoginSuccess }) {
           </div>
 
           <div style={{ textAlign: 'left' }}>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--ink)' }}>
+            <label htmlFor="login-password" style={{ fontSize: '12px', fontWeight: 600, color: 'var(--ink)' }}>
               Password
             </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              required
-              style={{
-                width: '100%',
-                padding: '10px 14px',
-                borderRadius: '14px',
-                border: '1px solid var(--line-2)',
-                background: 'var(--soft)',
-                color: 'var(--ink)',
-                fontSize: '14px',
-                marginTop: '4px'
-              }}
-            />
+            <div style={{ position: 'relative', display: 'flex', marginTop: '4px', width: '100%' }}>
+              <input
+                id="login-password"
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                autoComplete="current-password"
+                style={{
+                  width: '100%',
+                  padding: '10px 42px 10px 14px',
+                  borderRadius: '14px',
+                  border: '1px solid var(--line-2)',
+                  background: 'var(--soft)',
+                  color: 'var(--ink)',
+                  fontSize: '14px'
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                title={showPassword ? 'Hide password' : 'Show password'}
+                tabIndex={0}
+                style={{
+                  position: 'absolute',
+                  right: '8px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'transparent',
+                  border: 'none',
+                  padding: '6px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--muted)',
+                  borderRadius: '8px',
+                  lineHeight: 1
+                }}
+              >
+                <Icon name={showPassword ? 'eyeOff' : 'eye'} size={18} />
+              </button>
+            </div>
           </div>
 
           <button
