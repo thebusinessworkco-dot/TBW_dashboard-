@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { query } from '../_lib/db.js'
+import { query, getDbDiagnostics } from '../_lib/db.js'
 
 const router = Router()
 
@@ -31,6 +31,7 @@ router.get('/', async (req, res) => {
       target: 'supabase-postgres',
       status: dbStatus,
       latency_ms: dbTime,
+      diagnostics: getDbDiagnostics(),
       ...(dbError ? { error: dbError } : {})
     },
     timestamp: new Date().toISOString()

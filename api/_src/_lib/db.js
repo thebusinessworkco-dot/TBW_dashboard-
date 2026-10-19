@@ -139,6 +139,23 @@ export function buildPgPoolConfig(databaseUrl) {
   return config
 }
 
+export function getDbDiagnostics() {
+  const connectionString = process.env.DATABASE_URL
+  if (!connectionString) return { configured: false }
+  try {
+    const config = buildPgPoolConfig(connectionString)
+    return {
+      configured: true,
+      host: config.host,
+      port: config.port,
+      user: config.user,
+      database: config.database
+    }
+  } catch (err) {
+    return { configured: false, error: err.message }
+  }
+}
+
 let pool = null
 
 export function getPool() {
