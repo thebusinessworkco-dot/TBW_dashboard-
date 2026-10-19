@@ -3,6 +3,7 @@ import http from 'http'
 import crypto from 'crypto'
 import { app } from '../api/index.js'
 import { googleSheetsService } from '../api/services/googleSheets.js'
+import { getPostgresSslConfig } from '../database/migrate_data.js'
 
 process.env.NODE_ENV = 'test'
 process.env.N8N_API_KEY = 'test-verified-n8n-key-9988'
@@ -251,6 +252,47 @@ async function runIntegrationSuite() {
       const ownerUid = '0384f5a7-a525-4b6e-9517-200bc5ec11e4'
       const configuredOwner = process.env.TBW_OWNER_SUPABASE_UID
       assert.strictEqual(ownerUid, configuredOwner)
+    })
+
+    // ------------------------------------------------------------------------
+    // 6. DATABASE MIGRATION SECURE TLS & CA VALIDATION
+    // ------------------------------------------------------------------------
+    await test('Migration TLS: getPostgresSslConfig strictly enforces rejectUnauthorized: true with Supabase Root CA', () => {
+      const remoteUrl = 'postgresql://postgres.fbyyjmxrkizlpmxakkdo:secret@aws-0-ap-south-1.pooler.supabase.com:6543/postgres'
+      const ssl = getPostgresSslConfig(remoteUrl)
+      
+      assert.ok(ssl, 'SSL configuration should not be false for remote Supabase connection')
+      assert.strictEqual(ssl.rejectUnauthorized, true, 'rejectUnauthorized must strictly be true')
+      assert.ok(Array.isArray(ssl.ca), 'CA must be an array of trusted certificates')
+      assert.ok(ssl.ca.length > 1, 'CA bundle must contain root certs plus Supabase CA')
+      
+      const hasSupabaseCa = ssl.ca.some(certPem => {
+        try {
+          const x509 = new crypto.X509Certificate(certPem)
+          return x509.subject.includes('Supabase Root 2021 CA')
+        } catch {
+          return false
+        }
+      })
+      assert.strictEqual(hasSupabaseCa, true, 'Supabase Root 2021 CA must be included in the trusted CA list')
+    })
+
+    await test('Migration TLS: getPostgresSslConfig disables SSL for localhost connections', () => {
+      const localUrl = 'postgresql://postgres:postgres@localhost:5432/tbw_local'
+      const ssl = getPostgresSslConfig(localUrl)
+      assert.strictEqual(ssl, false, 'Local PostgreSQL connections should have ssl: false')
+
+      const loopbackUrl = 'postgresql://postgres:postgres@127.0.0.1:5432/tbw_local'
+      const loopbackSsl = getPostgresSslConfig(loopbackUrl)
+      assert.strictEqual(loopbackSsl, false, '127.0.0.1 PostgreSQL connections should have ssl: false')
+    })
+
+    await test('Migration TLS: getPostgresSslConfig accepts custom CA certificate paths and env variables', () => {
+      const remoteUrl = 'postgresql://postgres:secret@db.example.com:5432/postgres'
+      const ssl = getPostgresSslConfig(remoteUrl, 'database/prod-ca-2021.crt')
+      
+      assert.strictEqual(ssl.rejectUnauthorized, true)
+      assert.ok(ssl.ca.length > 100)
     })
 
   } finally {

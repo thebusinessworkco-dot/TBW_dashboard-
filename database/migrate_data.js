@@ -18,14 +18,101 @@
  */
 
 import pg from 'pg'
-import { readdirSync, existsSync } from 'fs'
+import { readdirSync, existsSync, readFileSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import tls from 'tls'
 import dotenv from 'dotenv'
 
 dotenv.config()
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+
+/**
+ * Official Supabase Root 2021 CA Certificate
+ * Subject: C=US, ST=Delware, L=New Castle, O=Supabase Inc, CN=Supabase Root 2021 CA
+ * Valid until: Apr 26 10:56:53 2031 GMT
+ * Used for secure TLS verification with Supabase PostgreSQL instances.
+ */
+export const SUPABASE_ROOT_CA = `-----BEGIN CERTIFICATE-----
+MIIDxDCCAqygAwIBAgIUbLxMod62P2ktCiAkxnKJwtE9VPYwDQYJKoZIhvcNAQEL
+BQAwazELMAkGA1UEBhMCVVMxEDAOBgNVBAgMB0RlbHdhcmUxEzARBgNVBAcMCk5l
+dyBDYXN0bGUxFTATBgNVBAoMDFN1cGFiYXNlIEluYzEeMBwGA1UEAwwVU3VwYWJh
+c2UgUm9vdCAyMDIxIENBMB4XDTIxMDQyODEwNTY1M1oXDTMxMDQyNjEwNTY1M1ow
+azELMAkGA1UEBhMCVVMxEDAOBgNVBAgMB0RlbHdhcmUxEzARBgNVBAcMCk5ldyBD
+YXN0bGUxFTATBgNVBAoMDFN1cGFiYXNlIEluYzEeMBwGA1UEAwwVU3VwYWJhc2Ug
+Um9vdCAyMDIxIENBMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqQXW
+QyHOB+qR2GJobCq/CBmQ40G0oDmCC3mzVnn8sv4XNeWtE5XcEL0uVih7Jo4Dkx1Q
+DmGHBH1zDfgs2qXiLb6xpw/CKQPypZW1JssOTMIfQppNQ87K75Ya0p25Y3ePS2t2
+GtvHxNjUV6kjOZjEn2yWEcBdpOVCUYBVFBNMB4YBHkNRDa/+S4uywAoaTWnCJLUi
+cvTlHmMw6xSQQn1UfRQHk50DMCEJ7Cy1RxrZJrkXXRP3LqQL2ijJ6F4yMfh+Gyb4
+O4XajoVj/+R4GwywKYrrS8PrSNtwxr5StlQO8zIQUSMiq26wM8mgELFlS/32Uclt
+NaQ1xBRizkzpZct9DwIDAQABo2AwXjALBgNVHQ8EBAMCAQYwHQYDVR0OBBYEFKjX
+uXY32CztkhImng4yJNUtaUYsMB8GA1UdIwQYMBaAFKjXuXY32CztkhImng4yJNUt
+aUYsMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggEBAB8spzNn+4VU
+tVxbdMaX+39Z50sc7uATmus16jmmHjhIHz+l/9GlJ5KqAMOx26mPZgfzG7oneL2b
+VW+WgYUkTT3XEPFWnTp2RJwQao8/tYPXWEJDc0WVQHrpmnWOFKU/d3MqBgBm5y+6
+jB81TU/RG2rVerPDWP+1MMcNNy0491CTL5XQZ7JfDJJ9CCmXSdtTl4uUQnSuv/Qx
+Cea13BX2ZgJc7Au30vihLhub52De4P/4gonKsNHYdbWjg7OWKwNv/zitGDVDB9Y2
+CMTyZKG3XEu5Ghl1LEnI3QmEKsqaCLv12BnVjbkSeZsMnevJPs1Ye6TjjJwdik5P
+o/bKiIz+Fq8=
+-----END CERTIFICATE-----`
+
+/**
+ * Configure secure TLS options for PostgreSQL connection.
+ * Strictly verifies certificates (rejectUnauthorized: true) using the system trust store,
+ * the Supabase Root CA, and any custom CA certificates provided.
+ */
+export function getPostgresSslConfig(databaseUrl, customCaPath = null) {
+  const isLocalPg = databaseUrl.includes('localhost') || databaseUrl.includes('127.0.0.1')
+  if (isLocalPg) {
+    return false
+  }
+
+  const caList = [...tls.rootCertificates]
+
+  // 1. Check custom CA from argument, PG_CA_CERT, SUPABASE_SSL_CERT, or PGSSLROOTCERT
+  const envCa = customCaPath || process.env.PG_CA_CERT || process.env.SUPABASE_SSL_CERT || process.env.PGSSLROOTCERT
+  if (envCa) {
+    if (envCa.includes('-----BEGIN CERTIFICATE-----')) {
+      caList.push(envCa.trim())
+    } else if (existsSync(envCa)) {
+      try {
+        caList.push(readFileSync(envCa, 'utf8').trim())
+      } catch (err) {
+        console.warn(`  ⚠ Warning: Could not read custom CA file "${envCa}": ${err.message}`)
+      }
+    }
+  }
+
+  // 2. Check local database/prod-ca-2021.crt file
+  const localCandidates = [
+    resolve(__dirname, 'prod-ca-2021.crt'),
+    resolve(process.cwd(), 'database/prod-ca-2021.crt'),
+    resolve(process.cwd(), 'prod-ca-2021.crt')
+  ]
+  for (const candidate of localCandidates) {
+    if (existsSync(candidate)) {
+      try {
+        const cert = readFileSync(candidate, 'utf8').trim()
+        if (!caList.includes(cert)) {
+          caList.push(cert)
+        }
+        break
+      } catch {}
+    }
+  }
+
+  // 3. Fallback: Always include official Supabase Root 2021 CA certificate
+  if (!caList.includes(SUPABASE_ROOT_CA.trim())) {
+    caList.push(SUPABASE_ROOT_CA.trim())
+  }
+
+  return {
+    rejectUnauthorized: true,
+    ca: caList
+  }
+}
 
 // Load better-sqlite3 cleanly in ESM
 let Database
@@ -115,6 +202,9 @@ export async function runMigration(options = {}) {
   const isDryRun = options.dryRun || args.includes('--dry-run')
   const isVerifyOnly = options.verifyOnly || args.includes('--verify-only')
 
+  const caArg = args.find(a => a.startsWith('--ca=') || a.startsWith('--ca-cert='))
+  const customCaPath = options.caCert || (caArg ? caArg.split('=')[1] : null)
+
   let sqlitePath = options.sqlitePath || args.find(a => !a.startsWith('--'))
   if (!sqlitePath) {
     sqlitePath = findLatestBackup() || resolve(__dirname, '../server/data/tbw.db')
@@ -156,13 +246,19 @@ export async function runMigration(options = {}) {
   console.log('  ✓ SQLite PRAGMA foreign_key_check: 0 violations')
 
   // --------------------------------------------------------------------------
-  // STEP 2: CONNECT TO POSTGRESQL
+  // STEP 2: CONNECT TO POSTGRESQL WITH SECURE TLS VERIFICATION
   // --------------------------------------------------------------------------
   console.log('Step 2: Connecting to target PostgreSQL database...')
-  const isLocalPg = databaseUrl.includes('localhost') || databaseUrl.includes('127.0.0.1')
+  const sslConfig = getPostgresSslConfig(databaseUrl, customCaPath)
+  if (sslConfig) {
+    console.log('  ✓ Secure TLS enabled with trusted Supabase Root CA verification (rejectUnauthorized: true).')
+  } else {
+    console.log('  ✓ Local PostgreSQL connection (SSL disabled for localhost).')
+  }
+
   const pool = new pg.Pool({
     connectionString: databaseUrl,
-    ssl: isLocalPg ? false : { rejectUnauthorized: process.env.PG_SSL_REJECT_UNAUTHORIZED === 'true' },
+    ssl: sslConfig,
     max: 2,
     connectionTimeoutMillis: 10000
   })
