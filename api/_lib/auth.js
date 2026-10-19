@@ -7,7 +7,7 @@ let authClient = null
 
 export function getAuthClient() {
   const url = optionalEnv('SUPABASE_URL', optionalEnv('VITE_SUPABASE_URL'))
-  const anonKey = optionalEnv('SUPABASE_PUBLISHABLE_KEY', optionalEnv('VITE_SUPABASE_PUBLISHABLE_KEY'))
+  const anonKey = optionalEnv('SUPABASE_PUBLISHABLE_KEY', optionalEnv('SUPABASE_ANON_KEY', optionalEnv('VITE_SUPABASE_PUBLISHABLE_KEY', optionalEnv('VITE_SUPABASE_ANON_KEY'))))
 
   if (!url || !anonKey) {
     return null

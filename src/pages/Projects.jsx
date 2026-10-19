@@ -16,20 +16,20 @@ export default function Projects() {
   const [projectDetail, setProjectDetail] = useState(null)
 
   // New Project Form
-  const [form, setForm] = useState({
+  const [form, setForm] = useState(() => ({
     title: '',
     client_id: '',
     budget: '',
     deliverables: '',
     due_date: new Date(Date.now() + 21 * 86400000).toISOString().split('T')[0]
-  })
+  }))
 
   // New Task Form
-  const [taskForm, setTaskForm] = useState({
+  const [taskForm, setTaskForm] = useState(() => ({
     title: '',
     priority: 'medium',
     due_date: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]
-  })
+  }))
 
   const loadData = async () => {
     try {

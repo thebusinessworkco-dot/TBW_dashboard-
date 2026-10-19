@@ -1,6 +1,8 @@
 import assert from 'assert'
 import http from 'http'
+import crypto from 'crypto'
 import { app } from '../api/index.js'
+import { getPostgresSslConfig, buildPgPoolConfig } from '../api/_lib/db.js'
 
 process.env.NODE_ENV = 'test'
 process.env.N8N_API_KEY = 'test-n8n-key-12345'
@@ -232,6 +234,49 @@ async function runTests() {
       const data = await res.json()
       assert.strictEqual(data.success, false)
       assert.strictEqual(data.error.code, 'NOT_FOUND')
+    })
+
+    // 11. Serverless PostgreSQL SSL Configuration
+    await test('Serverless DB: getPostgresSslConfig enforces rejectUnauthorized: true with Supabase CAs', async () => {
+      const remoteUrl = 'postgresql://postgres.fbyyjmxrkizlpmxakkdo:secret@aws-0-ap-southeast-2.pooler.supabase.com:6543/postgres?sslmode=require'
+      const ssl = getPostgresSslConfig(remoteUrl)
+      assert.strictEqual(ssl.rejectUnauthorized, true)
+      assert.strictEqual(ssl.servername, 'aws-0-ap-southeast-2.pooler.supabase.com')
+      assert.ok(Array.isArray(ssl.ca))
+
+      const hasIntermediate = ssl.ca.some(certPem => {
+        try {
+          const x509 = new crypto.X509Certificate(certPem)
+          return x509.subject.includes('Supabase Intermediate 2021 CA')
+        } catch {
+          return false
+        }
+      })
+      assert.strictEqual(hasIntermediate, true, 'Supabase Intermediate 2021 CA must be in trusted CA list')
+
+      const hasRoot = ssl.ca.some(certPem => {
+        try {
+          const x509 = new crypto.X509Certificate(certPem)
+          return x509.subject.includes('Supabase Root 2021 CA')
+        } catch {
+          return false
+        }
+      })
+      assert.strictEqual(hasRoot, true, 'Supabase Root 2021 CA must be in trusted CA list')
+    })
+
+    // 12. Serverless PostgreSQL Pool Config Builder
+    await test('Serverless DB: buildPgPoolConfig safely strips sslmode and prevents SSL override collisions', async () => {
+      const remoteUrl = 'postgresql://myuser:mypass@aws-0-ap-southeast-2.pooler.supabase.com:6543/mydatabase?sslmode=require'
+      const config = buildPgPoolConfig(remoteUrl)
+      assert.strictEqual(config.host, 'aws-0-ap-southeast-2.pooler.supabase.com')
+      assert.strictEqual(config.port, 6543)
+      assert.strictEqual(config.user, 'myuser')
+      assert.strictEqual(config.password, 'mypass')
+      assert.strictEqual(config.database, 'mydatabase')
+      assert.strictEqual(config.ssl.rejectUnauthorized, true)
+      assert.strictEqual(config.ssl.servername, 'aws-0-ap-southeast-2.pooler.supabase.com')
+      assert.strictEqual(config.connectionString, undefined)
     })
 
   } finally {

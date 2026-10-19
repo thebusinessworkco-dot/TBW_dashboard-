@@ -29,7 +29,6 @@ import { api } from './lib/api'
 import { AppContext } from './lib/store'
 import { liquidSwitch } from './lib/themeTransition'
 import { localIso, money, uid } from './lib/format'
-import * as seed from './data/seed'
 
 const VIEWS = [
   { id: 'overview', label: 'Overview', rail: 'Dashboard', icon: 'category', page: Overview },
@@ -190,6 +189,7 @@ export default function App() {
 
   /* ---------- modals & overlays ---------- */
   const [modal, setModal] = useState(null)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const openModal = useCallback((type, payload = {}) => setModal({ type, payload }), [])
   const closeModal = useCallback(() => setModal(null), [])
   const [signedOut, setSignedOut] = useState(() => !localStorage.getItem('tbw_token'))

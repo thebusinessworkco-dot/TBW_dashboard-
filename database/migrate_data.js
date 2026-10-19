@@ -785,7 +785,7 @@ export async function runMigration(options = {}) {
 
       } catch (err) {
         await client.query('ROLLBACK').catch(() => {})
-        throw new Error(`Migration failed and was atomically rolled back! Error: ${err.message}`)
+        throw new Error(`Migration failed and was atomically rolled back! Error: ${err.message}`, { cause: err })
       }
     }
 

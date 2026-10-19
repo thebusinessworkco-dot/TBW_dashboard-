@@ -183,7 +183,7 @@ class GoogleSheetsService {
       }
     }
 
-    let token = null
+    let token
     try {
       token = await this.getAccessToken()
     } catch (err) {

@@ -147,7 +147,6 @@ export function generateQuotationPdf(quotation, stream) {
       doc.fillColor('#64748b').fontSize(8).font('Helvetica-Bold').text('PAYMENT MILESTONES:', 45, curY)
       curY += 10
       doc.fillColor('#475569').fontSize(8).font('Helvetica').text(quotation.payment_milestones, 45, curY, { width: 505 })
-      curY += 15
     }
   }
 

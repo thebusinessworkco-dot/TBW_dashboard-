@@ -18,7 +18,7 @@ export default function Invoices() {
   const [paying, setPaying] = useState(false)
 
   // New Invoice Form
-  const [form, setForm] = useState({
+  const [form, setForm] = useState(() => ({
     client_id: '',
     tax_type: 'none',
     tax_rate: 0,
@@ -27,7 +27,7 @@ export default function Invoices() {
     due_date: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
     terms: 'Payment due within 14 days of issue date.',
     items: [{ description: 'Automation Solution Setup', quantity: 1, unit_price: 45000 }]
-  })
+  }))
 
   // Payment Form
   const [payForm, setPayForm] = useState({
