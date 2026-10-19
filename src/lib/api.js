@@ -1,6 +1,10 @@
+import { supabase } from './supabase.js'
+
 const API_BASE = import.meta.env.VITE_API_URL || ''
 
-export async function apiRequest(endpoint, options = {}) {
+let isRefreshing = false
+
+export async function apiRequest(endpoint, options = {}, isRetry = false) {
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`
   const headers = {
     'Content-Type': 'application/json',
@@ -33,11 +37,42 @@ export async function apiRequest(endpoint, options = {}) {
     error.code = data?.error?.code
     error.details = data?.error?.details
 
-    // Handle session expiration
+    // 401 Handling: Avoid loops and handle silent token refresh
     if (res.status === 401) {
-      localStorage.removeItem('tbw_token')
-      delete window.__tbw_supabase_token
-      window.dispatchEvent(new CustomEvent('tbw_auth_expired', { detail: { code: data?.error?.code || 'UNAUTHORIZED' } }))
+      const isAuthEndpoint = endpoint.includes('/auth/login') || endpoint.includes('/auth/register')
+
+      // Never trigger session expiration on login/registration failures
+      if (!isAuthEndpoint) {
+        // Attempt Supabase silent token refresh before invalidating session
+        if (!isRetry && supabase && !isRefreshing) {
+          isRefreshing = true
+          try {
+            const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession()
+            if (!refreshError && refreshData?.session?.access_token) {
+              const freshToken = refreshData.session.access_token
+              localStorage.setItem('tbw_token', freshToken)
+              window.__tbw_supabase_token = freshToken
+              isRefreshing = false
+              // Retry original request with fresh token
+              return apiRequest(endpoint, {
+                ...options,
+                headers: { ...headers, Authorization: `Bearer ${freshToken}` }
+              }, true)
+            }
+          } catch {
+            // Refresh failed; proceed to session termination
+          } finally {
+            isRefreshing = false
+          }
+        }
+
+        // Token is genuinely invalid and cannot be refreshed
+        localStorage.removeItem('tbw_token')
+        delete window.__tbw_supabase_token
+        window.dispatchEvent(new CustomEvent('tbw_auth_expired', {
+          detail: { code: data?.error?.code || 'UNAUTHORIZED' }
+        }))
+      }
     }
 
     throw error

@@ -70,7 +70,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         SUM(CASE WHEN lifecycle_status = 'won' THEN 1 ELSE 0 END)::int as converted_clients,
         SUM(CASE WHEN lifecycle_status = 'lost' THEN 1 ELSE 0 END)::int as lost_leads
       FROM clients
-      WHERE ${clientFilter.sql}
+      WHERE is_deleted = false AND (${clientFilter.sql})
     `, clientFilter.params)
     const leadStats = leadStatsRes.rows[0]
 
@@ -82,14 +82,14 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     const leadsByStageRes = await query(`
       SELECT lifecycle_status as stage, COUNT(*)::int as count
       FROM clients
-      WHERE ${clientFilter.sql}
+      WHERE is_deleted = false AND (${clientFilter.sql})
       GROUP BY lifecycle_status
     `, clientFilter.params)
 
     const leadsBySourceRes = await query(`
       SELECT COALESCE(lead_source, 'Direct') as source, COUNT(*)::int as count
       FROM clients
-      WHERE ${clientFilter.sql}
+      WHERE is_deleted = false AND (${clientFilter.sql})
       GROUP BY COALESCE(lead_source, 'Direct')
       ORDER BY count DESC
       LIMIT 8

@@ -77,6 +77,7 @@ router.get('/export-csv', requireAuth, async (req, res, next) => {
           c.next_followup,
           c.created_at
         FROM clients c
+        WHERE c.is_deleted = false
         ORDER BY c.id DESC
       `)
 

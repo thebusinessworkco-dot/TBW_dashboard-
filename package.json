@@ -9,8 +9,9 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "npm --prefix server test",
+    "test": "node test/serverless_api_test.js && node test/integration_suite_test.js",
     "test:api": "node test/serverless_api_test.js",
+    "test:integration": "node test/integration_suite_test.js",
     "migrate:data": "node database/migrate_data.js"
   },
   "dependencies": {
