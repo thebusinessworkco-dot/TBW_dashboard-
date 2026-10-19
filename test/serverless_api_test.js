@@ -227,6 +227,31 @@ async function runTests() {
       assert.ok('success' in data)
     })
 
+    // 9b. Profile & Password Update Endpoints (Security & Validation)
+    await test('PUT /api/auth/profile requires authentication (401 UNAUTHORIZED)', async () => {
+      const res = await fetch(`${BASE_URL}/api/auth/profile`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'New Name' })
+      })
+      assert.strictEqual(res.status, 401)
+      const data = await res.json()
+      assert.strictEqual(data.success, false)
+      assert.strictEqual(data.error.code, 'UNAUTHORIZED')
+    })
+
+    await test('PUT /api/auth/password requires authentication (401 UNAUTHORIZED)', async () => {
+      const res = await fetch(`${BASE_URL}/api/auth/password`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_password: 'oldpassword', new_password: 'newpassword123' })
+      })
+      assert.strictEqual(res.status, 401)
+      const data = await res.json()
+      assert.strictEqual(data.success, false)
+      assert.strictEqual(data.error.code, 'UNAUTHORIZED')
+    })
+
     // 10. 404 Handler
     await test('Non-existent route returns standard 404 NOT_FOUND response', async () => {
       const res = await fetch(`${BASE_URL}/api/non_existent_route_${Date.now()}`)

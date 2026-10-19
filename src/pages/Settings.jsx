@@ -3,6 +3,8 @@ import Icon from '../components/Icon'
 import { PageHead, Toggle } from '../components/ui'
 import { useApp } from '../lib/store'
 import { CURRENCIES } from '../data/seed'
+import { api } from '../lib/api'
+import { supabase } from '../lib/supabase'
 
 const TABS = [
   { id: 'general', icon: 'gear', label: 'General', body: 'Language, currency and region' },
@@ -38,27 +40,113 @@ function PasswordForm({ toast }) {
   const [cur, setCur] = useState('')
   const [pw, setPw] = useState('')
   const [show, setShow] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [success, setSuccess] = useState(null)
   const s = strength(pw)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!cur) {
+      setError('Please enter your current password.')
+      return
+    }
+    if (pw.length < 8) {
+      setError('New password must be at least 8 characters long.')
+      return
+    }
+    if (s < 3) {
+      setError('Password is too weak. Please use uppercase, lowercase, numbers, and symbols.')
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+    setSuccess(null)
+
+    try {
+      const res = await api.put('/api/auth/password', {
+        current_password: cur,
+        new_password: pw
+      })
+
+      if (!res.success) {
+        throw new Error(res.error?.message || 'Failed to update password')
+      }
+
+      // If Supabase client session is active, synchronize client session
+      if (supabase) {
+        try {
+          await supabase.auth.updateUser({ password: pw })
+        } catch {}
+      }
+
+      setCur('')
+      setPw('')
+      setSuccess('Password updated successfully! Next time you sign in, please use your new password.')
+      toast('Password updated', 'Your password has been changed securely.', { icon: 'lock' })
+    } catch (err) {
+      setError(err.message || 'Failed to update password. Please check your current password.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
-    <form
-      className="form"
-      onSubmit={(e) => {
-        e.preventDefault()
-        if (!cur || s < 3) return
-        setCur('')
-        setPw('')
-        toast('Password updated', 'Other devices will be asked to sign in again.', { icon: 'lock' })
-      }}
-    >
+    <form className="form" onSubmit={handleSubmit}>
+      {error ? (
+        <div style={{
+          padding: '10px 14px',
+          background: 'color-mix(in srgb, #ef4444 12%, var(--card))',
+          border: '1px solid #ef4444',
+          borderRadius: '10px',
+          color: '#dc2626',
+          fontSize: '13px',
+          marginBottom: '12px'
+        }}>
+          {error}
+        </div>
+      ) : null}
+
+      {success ? (
+        <div style={{
+          padding: '10px 14px',
+          background: 'color-mix(in srgb, #10b981 12%, var(--card))',
+          border: '1px solid #10b981',
+          borderRadius: '10px',
+          color: '#059669',
+          fontSize: '13px',
+          marginBottom: '12px'
+        }}>
+          {success}
+        </div>
+      ) : null}
+
       <label className="field">
         <span>Current password</span>
-        <input type="password" value={cur} onChange={(e) => setCur(e.target.value)} autoComplete="current-password" />
+        <input
+          type="password"
+          value={cur}
+          onChange={(e) => { setCur(e.target.value); setError(null); }}
+          autoComplete="current-password"
+          disabled={loading}
+          placeholder="••••••••"
+          required
+        />
       </label>
       <label className="field">
         <span>New password</span>
         <div className="pw-wrap">
-          <input type={show ? 'text' : 'password'} value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="new-password" />
-          <button type="button" onClick={() => setShow((v) => !v)} aria-label={show ? 'Hide password' : 'Show password'}>
+          <input
+            type={show ? 'text' : 'password'}
+            value={pw}
+            onChange={(e) => { setPw(e.target.value); setError(null); }}
+            autoComplete="new-password"
+            disabled={loading}
+            placeholder="At least 8 characters"
+            required
+          />
+          <button type="button" onClick={() => setShow((v) => !v)} aria-label={show ? 'Hide password' : 'Show password'} disabled={loading}>
             <Icon name={show ? 'eyeOff' : 'eye'} size={18} />
           </button>
         </div>
@@ -69,8 +157,8 @@ function PasswordForm({ toast }) {
         </div>
         <small>{['Too short', 'Weak', 'Okay', 'Strong', 'Very strong'][s]} — use 8+ characters with numbers and symbols.</small>
       </label>
-      <button type="submit" className="btn solid lg" disabled={!cur || s < 3}>
-        Update password
+      <button type="submit" className="btn solid lg" disabled={loading || !cur || s < 3}>
+        {loading ? 'Updating password…' : 'Update password'}
       </button>
     </form>
   )

@@ -4,6 +4,7 @@ import { Avatar } from '../components/Brand'
 import { PageHead, Toggle } from '../components/ui'
 import { useApp } from '../lib/store'
 import { money, uid } from '../lib/format'
+import { api } from '../lib/api'
 
 const LIMITS = [
   { label: 'Daily transfers', used: 12400, cap: 25000 },
@@ -12,42 +13,95 @@ const LIMITS = [
 ]
 
 function ProfileForm({ user, onSave, onCancel }) {
-  const [draft, setDraft] = useState(user)
-  const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }))
+  const [draft, setDraft] = useState(user || {})
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+  const set = (k) => (e) => {
+    setError(null)
+    setDraft((d) => ({ ...d, [k]: e.target.value }))
+  }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!draft.name || !draft.name.trim()) {
+      setError('Please enter a valid full name.')
+      return
+    }
+
+    setSaving(true)
+    setError(null)
+    try {
+      await onSave(draft)
+    } catch (err) {
+      setError(err.message || 'Failed to update profile. Please try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
-    <form
-      className="form profile-form"
-      onSubmit={(e) => {
-        e.preventDefault()
-        onSave(draft)
-      }}
-    >
+    <form className="form profile-form" onSubmit={handleSubmit}>
+      {error ? (
+        <div style={{
+          padding: '10px 14px',
+          background: 'color-mix(in srgb, #ef4444 12%, var(--card))',
+          border: '1px solid #ef4444',
+          borderRadius: '10px',
+          color: '#dc2626',
+          fontSize: '13px',
+          marginBottom: '12px'
+        }}>
+          {error}
+        </div>
+      ) : null}
+
       <div className="field-row">
         <label className="field">
           <span>Full name</span>
-          <input value={draft.name} onChange={set('name')} required />
+          <input
+            value={draft.name || ''}
+            onChange={set('name')}
+            placeholder="Your Name"
+            required
+            disabled={saving}
+          />
         </label>
         <label className="field">
           <span>Email</span>
-          <input type="email" value={draft.email} onChange={set('email')} required />
+          <input
+            type="email"
+            value={draft.email || ''}
+            disabled
+            title="Work email is managed by your administrator"
+          />
         </label>
       </div>
       <div className="field-row">
         <label className="field">
           <span>Phone</span>
-          <input value={draft.phone} onChange={set('phone')} />
+          <input
+            value={draft.phone || ''}
+            onChange={set('phone')}
+            placeholder="+91 9876543210"
+            disabled={saving}
+          />
         </label>
         <label className="field">
           <span>Location</span>
-          <input value={draft.location} onChange={set('location')} />
+          <input
+            value={draft.location || ''}
+            onChange={set('location')}
+            placeholder="City, Country"
+            disabled={saving}
+          />
         </label>
       </div>
       <div className="row-btns end">
-        <button type="button" className="btn lg" onClick={onCancel}>
+        <button type="button" className="btn lg" onClick={onCancel} disabled={saving}>
           Cancel
         </button>
-        <button type="submit" className="btn solid lg">
-          Save changes
+        <button type="submit" className="btn solid lg" disabled={saving}>
+          {saving ? 'Saving changes…' : 'Save changes'}
         </button>
       </div>
     </form>
@@ -57,6 +111,26 @@ function ProfileForm({ user, onSave, onCancel }) {
 export default function Account() {
   const { user, setUser, banks, setBanks, sessions, setSessions, security, setSecurity, toast } = useApp()
   const [editing, setEditing] = useState(false)
+
+  const handleSaveProfile = async (d) => {
+    const res = await api.put('/api/auth/profile', {
+      name: d.name.trim(),
+      phone: d.phone ? d.phone.trim() : null
+    })
+
+    if (res.success && res.data?.user) {
+      setUser((u) => ({
+        ...u,
+        ...res.data.user,
+        location: d.location || u.location,
+        first: res.data.user.name.trim().split(/\s+/)[0]
+      }))
+      setEditing(false)
+      toast('Profile updated', 'Your changes have been saved.', { icon: 'user' })
+    } else {
+      throw new Error(res.error?.message || 'Failed to update profile.')
+    }
+  }
 
   return (
     <>
@@ -98,11 +172,7 @@ export default function Account() {
             <ProfileForm
               user={user}
               onCancel={() => setEditing(false)}
-              onSave={(d) => {
-                setUser({ ...d, first: d.name.trim().split(/\s+/)[0] })
-                setEditing(false)
-                toast('Profile updated', 'Your changes are saved.', { icon: 'user' })
-              }}
+              onSave={handleSaveProfile}
             />
           ) : (
             <dl className="profile-facts">
