@@ -1,4 +1,4 @@
-﻿# Backend - hosted separately on VPS
+# Backend - hosted separately on VPS
 server/
 
 # Environment files and secrets
@@ -23,3 +23,9 @@ dist/
 
 # Local logs
 *.log
+
+# Development, tests, and documentation
+test/
+database/
+docs/
+*.md
