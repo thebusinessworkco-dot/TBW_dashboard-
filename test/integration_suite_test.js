@@ -2,7 +2,7 @@ import assert from 'assert'
 import http from 'http'
 import crypto from 'crypto'
 import { app } from '../api/index.js'
-import { googleSheetsService } from '../api/services/googleSheets.js'
+import { googleSheetsService } from '../api/_src/services/googleSheets.js'
 import { getPostgresSslConfig, buildPgPoolConfig, verifyPostgresForeignKeys } from '../database/migrate_data.js'
 
 process.env.NODE_ENV = 'test'

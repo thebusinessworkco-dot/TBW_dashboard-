@@ -2,7 +2,7 @@ import assert from 'assert'
 import http from 'http'
 import crypto from 'crypto'
 import { app } from '../api/index.js'
-import { getPostgresSslConfig, buildPgPoolConfig } from '../api/_lib/db.js'
+import { getPostgresSslConfig, buildPgPoolConfig } from '../api/_src/_lib/db.js'
 
 process.env.NODE_ENV = 'test'
 process.env.N8N_API_KEY = 'test-n8n-key-12345'
