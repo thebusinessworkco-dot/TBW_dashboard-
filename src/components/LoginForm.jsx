@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Logo } from './Brand'
 import Icon from './Icon'
-import { api } from '../lib/api'
+import { cloudLogin } from '../lib/cloud-auth'
 
 export default function LoginForm({ onLoginSuccess }) {
   const [email, setEmail] = useState('')
@@ -17,17 +17,8 @@ export default function LoginForm({ onLoginSuccess }) {
     setError(null)
 
     try {
-      const res = await api.post('/api/auth/login', {
-        email: email.trim().toLowerCase(),
-        password
-      })
-
-      if (res.success && res.data) {
-        if (res.data.token) {
-          localStorage.setItem('tbw_token', res.data.token)
-        }
-        onLoginSuccess(res.data.user)
-      }
+      const user = await cloudLogin(email, password)
+      onLoginSuccess(user)
     } catch (err) {
       setError(err.message || 'Login failed. Please check your credentials.')
     } finally {

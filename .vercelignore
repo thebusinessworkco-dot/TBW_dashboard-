@@ -1,0 +1,25 @@
+﻿# Backend - hosted separately on VPS
+server/
+
+# Environment files and secrets
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Databases and backups
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.bak
+*.backup
+
+# Dependencies and generated files
+node_modules/
+dist/
+.vercel/
+.git/
+
+# Local logs
+*.log

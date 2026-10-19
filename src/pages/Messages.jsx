@@ -79,66 +79,55 @@ export default function Messages() {
     })
   }, [activeId])
 
-  // 4. Connect to Real-time Server-Sent Events (SSE)
+  // 4. Authenticated short-polling for serverless compatibility
   useEffect(() => {
-    let es = null
-    try {
-      const token = localStorage.getItem('tbw_token')
-      const sseUrl = `${api.getBaseUrl()}/api/sse/events${token ? `?token=${token}` : ''}`
-      es = new EventSource(sseUrl, { withCredentials: true })
+    let timer = null
+    let activePoll = true
 
-      es.addEventListener('new_message', (e) => {
-        try {
-          const msg = JSON.parse(e.data)
-          if (msg.conversation_id === activeId) {
+    const poll = async () => {
+      if (!activePoll) return
+      try {
+        if (activeId) {
+          const lastMsg = messages[messages.length - 1]
+          const sinceParam = lastMsg?.created_at ? `?since=${encodeURIComponent(lastMsg.created_at)}` : ''
+          const res = await api.get(`/api/conversations/${activeId}/messages${sinceParam}`)
+          if (res.success && res.data?.items && res.data.items.length > 0) {
             setMessages(prev => {
-              if (prev.some(m => m.id === msg.id || (m.wa_message_id && m.wa_message_id === msg.wa_message_id))) {
-                return prev
-              }
-              return [...prev, msg]
+              const existingIds = new Set(prev.map(m => m.id))
+              const newItems = res.data.items.filter(m => !existingIds.has(m.id))
+              if (newItems.length === 0) return prev
+              return [...prev, ...newItems]
             })
           }
-          // Update conversation last message in list
-          setConversations(prev => prev.map(c => {
-            if (c.id === msg.conversation_id) {
-              return {
-                ...c,
-                last_message_preview: msg.content,
-                last_message_at: msg.created_at,
-                unread_count: msg.conversation_id === activeId ? 0 : (c.unread_count || 0) + 1
-              }
-            }
-            return c
-          }))
-        } catch (err) {
-          console.error('SSE parse error:', err)
         }
-      })
-
-      es.addEventListener('mode_change', (e) => {
-        try {
-          const data = JSON.parse(e.data)
-          setConversations(prev => prev.map(c => c.id === data.conversationId ? { ...c, mode: data.mode } : c))
-          if (activeId === data.conversationId) {
-            setActiveDetails(prev => prev ? { ...prev, mode: data.mode } : prev)
-          }
-        } catch {}
-      })
-
-      es.addEventListener('status_update', (e) => {
-        try {
-          const data = JSON.parse(e.data)
-          setMessages(prev => prev.map(m => m.id === data.messageId ? { ...m, delivery_status: data.status } : m))
-        } catch {}
-      })
-    } catch (err) {
-      console.warn('SSE connection could not be established:', err)
+        const convRes = await api.get('/api/conversations')
+        if (convRes.success && convRes.data?.items) {
+          setConversations(convRes.data.items)
+        }
+      } catch {
+        // Silent catch during background polling
+      } finally {
+        if (activePoll) {
+          timer = setTimeout(poll, 4000)
+        }
+      }
     }
+
+    timer = setTimeout(poll, 4000)
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        poll()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
 
     return () => {
-      if (es) es.close()
+      activePoll = false
+      if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [activeId])
+  }, [activeId, messages])
 
   // Scroll to bottom when messages update
   useEffect(() => {

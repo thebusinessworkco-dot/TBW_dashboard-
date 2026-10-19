@@ -1,0 +1,7 @@
+{
+  "dependencies_to_add_at_project_root": {
+    "@supabase/supabase-js": "^2",
+    "pg": "^8"
+  },
+  "install_command": "npm install @supabase/supabase-js pg"
+}
