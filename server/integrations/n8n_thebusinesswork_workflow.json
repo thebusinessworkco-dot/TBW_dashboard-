@@ -27,13 +27,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.TBW_API_URL || 'http://localhost:3001' }}/api/webhook/n8n/message",
+        "url": "={{ $env.TBW_API_URL || 'https://dashboard.thebusinesswork.com' }}/api/webhook/n8n/message",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "X-N8N-API-KEY",
-              "value": "={{ $env.N8N_API_KEY || 'dev-n8n-key-change-in-production' }}"
+              "value": "={{ $env.N8N_API_KEY }}"
             },
             {
               "name": "Content-Type",
@@ -81,13 +81,13 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.TBW_API_URL || 'http://localhost:3001' }}/api/webhook/n8n/mode/{{ $('Parse WhatsApp Message').item.json.phone_number }}",
+        "url": "={{ $env.TBW_API_URL || 'https://dashboard.thebusinesswork.com' }}/api/webhook/n8n/mode/{{ $('Parse WhatsApp Message').item.json.phone_number }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "X-N8N-API-KEY",
-              "value": "={{ $env.N8N_API_KEY || 'dev-n8n-key-change-in-production' }}"
+              "value": "={{ $env.N8N_API_KEY }}"
             }
           ]
         },
@@ -213,13 +213,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.TBW_API_URL || 'http://localhost:3001' }}/api/webhook/n8n/message",
+        "url": "={{ $env.TBW_API_URL || 'https://dashboard.thebusinesswork.com' }}/api/webhook/n8n/message",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "X-N8N-API-KEY",
-              "value": "={{ $env.N8N_API_KEY || 'dev-n8n-key-change-in-production' }}"
+              "value": "={{ $env.N8N_API_KEY }}"
             },
             {
               "name": "Content-Type",

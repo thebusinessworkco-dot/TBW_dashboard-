@@ -58,9 +58,16 @@ router.get('/status', requireAuth, requireRole('admin', 'owner'), (req, res, nex
 router.post('/log', (req, res, next) => {
   try {
     const key = req.headers['x-n8n-api-key']
-    const expectedKey = process.env.N8N_API_KEY || 'dev-n8n-key-change-in-production'
+    const isProduction = process.env.NODE_ENV === 'production' || !!process.env.VERCEL
+    const configuredKey = process.env.N8N_API_KEY
 
-    if (!key || key !== expectedKey) {
+    if (isProduction && !configuredKey) {
+      return res.status(500).json({ success: false, error: { code: 'CONFIGURATION_ERROR', message: 'Webhook authentication is not configured on server.' } })
+    }
+
+    const expectedKey = configuredKey || (isProduction ? null : 'dev-n8n-key-change-in-production')
+
+    if (!key || !expectedKey || key !== expectedKey) {
       return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Invalid or missing X-N8N-API-KEY' } })
     }
 

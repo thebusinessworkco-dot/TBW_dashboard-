@@ -7,10 +7,21 @@ import { logger } from '../utils/logger.js'
 const router = Router()
 
 function requireN8nApiKey(req, res, next) {
-  const apiKey = req.headers['x-n8n-api-key'] || req.headers['authorization']?.replace('Bearer ', '')
-  const expectedKey = process.env.N8N_API_KEY || 'dev-n8n-key-change-in-production'
+  const apiKey = req.headers['x-n8n-api-key'] || req.headers['authorization']?.replace(/^Bearer\s+/i, '')
+  const isProduction = process.env.NODE_ENV === 'production' || !!process.env.VERCEL
+  const configuredKey = process.env.N8N_API_KEY
 
-  if (!apiKey || apiKey !== expectedKey) {
+  if (isProduction && !configuredKey) {
+    logger.error('N8N_API_KEY is not configured in production environment')
+    return res.status(500).json({
+      success: false,
+      error: { code: 'CONFIGURATION_ERROR', message: 'Webhook authentication is not configured on server.' }
+    })
+  }
+
+  const expectedKey = configuredKey || (isProduction ? null : 'dev-n8n-key-change-in-production')
+
+  if (!apiKey || !expectedKey || apiKey !== expectedKey) {
     logger.warn('Unauthorized n8n webhook attempt', { ip: req.ip })
     return res.status(401).json({
       success: false,
@@ -22,25 +33,26 @@ function requireN8nApiKey(req, res, next) {
 }
 
 const n8nMessageSchema = z.object({
-  wa_message_id: z.string().optional(),
+  wa_message_id: z.string().nullable().optional(),
   phone_number: z.string().min(5, 'Invalid phone number'),
-  contact_name: z.string().optional(),
+  contact_name: z.string().nullable().optional(),
   direction: z.enum(['inbound', 'outbound']).default('inbound'),
   sender_type: z.enum(['customer', 'ai', 'employee']).default('customer'),
   message_type: z.enum(['text', 'image', 'video', 'audio', 'document', 'location', 'contact', 'sticker', 'interactive', 'template', 'reaction', 'unknown']).default('text'),
-  content: z.string().optional().default(''),
-  media_url: z.string().optional(),
-  media_mime_type: z.string().optional(),
-  caption: z.string().optional(),
-  metadata: z.record(z.any()).optional()
+  content: z.string().nullable().optional().default(''),
+  media_url: z.string().nullable().optional(),
+  media_mime_type: z.string().nullable().optional(),
+  caption: z.string().nullable().optional(),
+  timestamp: z.union([z.string(), z.number()]).nullable().optional(),
+  metadata: z.record(z.any()).nullable().optional()
 })
 
 const n8nStatusSchema = z.object({
   wa_message_id: z.string(),
   status: z.enum(['pending', 'sent', 'delivered', 'read', 'failed']),
-  timestamp: z.string().optional(),
-  error_code: z.string().optional(),
-  error_detail: z.string().optional()
+  timestamp: z.string().nullable().optional(),
+  error_code: z.string().nullable().optional(),
+  error_detail: z.string().nullable().optional()
 })
 
 // GET /api/webhook/n8n/mode/:phone - Query conversation AI/Human mode for n8n workflow routing
@@ -85,8 +97,8 @@ router.get('/mode/:phone', requireN8nApiKey, (req, res, next) => {
   }
 })
 
-// POST /api/webhook/n8n/message - Receive inbound or AI outbound messages from n8n
-router.post('/message', requireN8nApiKey, (req, res, next) => {
+// POST /api/webhook/n8n (and /message, /incoming) - Receive inbound or AI outbound messages from n8n
+router.post(['/', '', '/message', '/incoming'], requireN8nApiKey, (req, res, next) => {
   try {
     const parseResult = n8nMessageSchema.safeParse(req.body)
     if (!parseResult.success) {

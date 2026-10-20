@@ -25,22 +25,29 @@ export default function Messages() {
 
   const thread = useRef(null)
 
+  const activeIdRef = useRef(activeId)
+  activeIdRef.current = activeId
+
   // 1. Fetch conversations from backend
   const loadConversations = useCallback(async () => {
     try {
       const res = await api.get('/api/conversations')
-      if (res.success && res.data.items) {
+      if (res.success && res.data?.items) {
         setConversations(res.data.items)
-        if (!activeId && res.data.items.length > 0) {
-          setActiveId(res.data.items[0].id)
-        }
+        setActiveId(curr => {
+          if (curr) {
+            const exists = res.data.items.some(c => String(c.id) === String(curr))
+            if (exists) return curr
+          }
+          return res.data.items.length > 0 ? res.data.items[0].id : null
+        })
       }
     } catch {
       // Backend not yet populated or offline; keep clean empty state
     } finally {
       setLoading(false)
     }
-  }, [activeId])
+  }, [])
 
   useEffect(() => {
     loadConversations()
@@ -57,21 +64,25 @@ export default function Messages() {
 
   // 3. Load active conversation messages & details
   useEffect(() => {
-    if (!activeId) return
+    if (!activeId) {
+      setMessages([])
+      setActiveDetails(null)
+      return
+    }
 
     setLoadingMsgs(true)
     Promise.all([
-      api.get(`/api/conversations/${activeId}/messages`),
+      api.get(`/api/conversations/${activeId}/messages?limit=100`),
       api.get(`/api/conversations/${activeId}`)
     ]).then(([msgRes, detailRes]) => {
-      if (msgRes.success && msgRes.data.items) {
+      if (msgRes.success && msgRes.data?.items) {
         setMessages(msgRes.data.items)
       }
       if (detailRes.success && detailRes.data) {
         setActiveDetails(detailRes.data)
       }
       // Reset unread locally in conversation list
-      setConversations(list => list.map(c => c.id === activeId ? { ...c, unread_count: 0 } : c))
+      setConversations(list => list.map(c => String(c.id) === String(activeId) ? { ...c, unread_count: 0 } : c))
     }).catch(err => {
       console.warn('Could not load conversation thread:', err.message)
     }).finally(() => {
@@ -79,55 +90,91 @@ export default function Messages() {
     })
   }, [activeId])
 
-  // 4. Authenticated short-polling for serverless compatibility
+  // 4. Authenticated short-polling for serverless compatibility & realtime message updates
   useEffect(() => {
     let timer = null
     let activePoll = true
 
     const poll = async () => {
       if (!activePoll) return
+      const currentActiveId = activeIdRef.current
+
       try {
-        if (activeId) {
-          const lastMsg = messages[messages.length - 1]
-          const sinceParam = lastMsg?.created_at ? `?since=${encodeURIComponent(lastMsg.created_at)}` : ''
-          const res = await api.get(`/api/conversations/${activeId}/messages${sinceParam}`)
-          if (res.success && res.data?.items && res.data.items.length > 0) {
-            setMessages(prev => {
-              const existingIds = new Set(prev.map(m => m.id))
-              const newItems = res.data.items.filter(m => !existingIds.has(m.id))
-              if (newItems.length === 0) return prev
-              return [...prev, ...newItems]
-            })
-          }
+        const promises = [api.get('/api/conversations')]
+        if (currentActiveId) {
+          promises.push(api.get(`/api/conversations/${currentActiveId}/messages?limit=100`))
         }
-        const convRes = await api.get('/api/conversations')
-        if (convRes.success && convRes.data?.items) {
-          setConversations(convRes.data.items)
+
+        const [convRes, msgRes] = await Promise.all(promises)
+
+        if (activePoll && convRes?.success && convRes.data?.items) {
+          const incomingConvs = convRes.data.items
+          setConversations(prev => {
+            if (prev.length !== incomingConvs.length) return incomingConvs
+            const hasDiff = incomingConvs.some((item, idx) => {
+              const p = prev[idx]
+              return !p ||
+                String(p.id) !== String(item.id) ||
+                p.last_message_at !== item.last_message_at ||
+                p.unread_count !== item.unread_count ||
+                p.mode !== item.mode ||
+                p.status !== item.status
+            })
+            return hasDiff ? incomingConvs : prev
+          })
+
+          // Auto-select first conversation if none is active
+          setActiveId(curr => {
+            if (!curr && incomingConvs.length > 0) {
+              return incomingConvs[0].id
+            }
+            return curr
+          })
+        }
+
+        if (activePoll && msgRes?.success && msgRes.data?.items && String(currentActiveId) === String(activeIdRef.current)) {
+          const incomingMsgs = msgRes.data.items
+          setMessages(prev => {
+            if (prev.length !== incomingMsgs.length) return incomingMsgs
+            const hasDiff = incomingMsgs.some((item, idx) => {
+              const p = prev[idx]
+              return !p ||
+                String(p.id) !== String(item.id) ||
+                p.delivery_status !== item.delivery_status ||
+                p.content !== item.content
+            })
+            return hasDiff ? incomingMsgs : prev
+          })
         }
       } catch {
         // Silent catch during background polling
       } finally {
         if (activePoll) {
-          timer = setTimeout(poll, 4000)
+          const interval = document.visibilityState === 'visible' ? 2500 : 10000
+          timer = setTimeout(poll, interval)
         }
       }
     }
 
-    timer = setTimeout(poll, 4000)
+    timer = setTimeout(poll, 2500)
 
     const onVisible = () => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && activePoll) {
+        if (timer) clearTimeout(timer)
         poll()
       }
     }
+
     document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
 
     return () => {
       activePoll = false
       if (timer) clearTimeout(timer)
       document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
     }
-  }, [activeId, messages])
+  }, [activeId])
 
   // Scroll to bottom when messages update
   useEffect(() => {
@@ -135,7 +182,7 @@ export default function Messages() {
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
   }, [messages.length])
 
-  const active = conversations.find(c => c.id === activeId) || activeDetails
+  const active = conversations.find(c => String(c.id) === String(activeId)) || activeDetails
 
   // 5. Toggle AI vs Human mode
   const toggleMode = async () => {
@@ -143,7 +190,7 @@ export default function Messages() {
     const newMode = (active.mode === 'ai' ? 'human' : 'ai')
     try {
       await api.patch(`/api/conversations/${active.id}/mode`, { mode: newMode })
-      setConversations(prev => prev.map(c => c.id === active.id ? { ...c, mode: newMode } : c))
+      setConversations(prev => prev.map(c => String(c.id) === String(active.id) ? { ...c, mode: newMode } : c))
       setActiveDetails(prev => prev ? { ...prev, mode: newMode } : prev)
       toast?.(
         newMode === 'human' ? 'Human Takeover Activated' : 'AI Bot Resumed',
@@ -259,7 +306,7 @@ export default function Messages() {
                 <button
                   key={c.id}
                   type="button"
-                  className={`convo rv ${c.id === activeId ? 'on' : ''}`}
+                  className={`convo rv ${String(c.id) === String(activeId) ? 'on' : ''}`}
                   style={{ '--i': i + 1 }}
                   onClick={() => setActiveId(c.id)}
                 >
@@ -283,7 +330,7 @@ export default function Messages() {
 
                   <span className="convo-meta">
                     <small>{c.last_message_at ? clock(new Date(c.last_message_at)) : ''}</small>
-                    {c.unread_count > 0 && c.id !== activeId ? (
+                    {c.unread_count > 0 && String(c.id) !== String(activeId) ? (
                       <b>{c.unread_count}</b>
                     ) : null}
                   </span>

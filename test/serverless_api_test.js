@@ -188,6 +188,17 @@ async function runTests() {
     })
 
     // 7. n8n Webhook Security & Idempotency
+    await test('POST /api/webhook/n8n (bare) rejects missing X-N8N-API-KEY (401)', async () => {
+      const res = await fetch(`${BASE_URL}/api/webhook/n8n`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone_number: '919876543210', content: 'Hello' })
+      })
+      assert.strictEqual(res.status, 401)
+      const data = await res.json()
+      assert.strictEqual(data.error.code, 'UNAUTHORIZED')
+    })
+
     await test('POST /api/webhook/n8n/incoming rejects missing X-N8N-API-KEY (401)', async () => {
       const res = await fetch(`${BASE_URL}/api/webhook/n8n/incoming`, {
         method: 'POST',
@@ -209,6 +220,30 @@ async function runTests() {
         body: JSON.stringify({ phone: '919876543210', content: 'Hello' })
       })
       assert.strictEqual(res.status, 401)
+    })
+
+    await test('POST /api/webhook/n8n safely accepts nullable fields without Zod validation failure', async () => {
+      const res = await fetch(`${BASE_URL}/api/webhook/n8n`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-n8n-api-key': process.env.N8N_API_KEY
+        },
+        body: JSON.stringify({
+          wa_message_id: null,
+          phone_number: '919876543210',
+          contact_name: null,
+          content: null,
+          media_url: null,
+          media_mime_type: null,
+          caption: null,
+          timestamp: null,
+          metadata: null
+        })
+      })
+      // Should not return 400 VALIDATION_ERROR (it passes validation and proceeds to db or returns response)
+      assert.notStrictEqual(res.status, 400, 'Zod should accept nullable fields')
+      assert.notStrictEqual(res.status, 404, 'Bare route /api/webhook/n8n should be routed successfully')
     })
 
     // 8. SSE Serverless-Safe Behavior

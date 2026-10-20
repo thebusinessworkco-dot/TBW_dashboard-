@@ -7,10 +7,21 @@ import { logger } from '../utils/logger.js'
 const router = Router()
 
 function requireN8nApiKey(req, res, next) {
-  const apiKey = req.headers['x-n8n-api-key'] || req.headers['authorization']?.replace('Bearer ', '')
-  const expectedKey = process.env.N8N_API_KEY || 'dev-n8n-key-change-in-production'
+  const apiKey = req.headers['x-n8n-api-key'] || req.headers['authorization']?.replace(/^Bearer\s+/i, '')
+  const isProduction = process.env.NODE_ENV === 'production' || !!process.env.VERCEL
+  const configuredKey = process.env.N8N_API_KEY
 
-  if (!apiKey || apiKey !== expectedKey) {
+  if (isProduction && !configuredKey) {
+    logger.error('N8N_API_KEY is not configured in production environment')
+    return res.status(500).json({
+      success: false,
+      error: { code: 'CONFIGURATION_ERROR', message: 'Webhook authentication is not configured on server.' }
+    })
+  }
+
+  const expectedKey = configuredKey || (isProduction ? null : 'dev-n8n-key-change-in-production')
+
+  if (!apiKey || !expectedKey || apiKey !== expectedKey) {
     logger.warn('Unauthorized n8n webhook attempt', { ip: req.ip })
     return res.status(401).json({
       success: false,
@@ -22,25 +33,26 @@ function requireN8nApiKey(req, res, next) {
 }
 
 const n8nMessageSchema = z.object({
-  wa_message_id: z.string().optional(),
+  wa_message_id: z.string().nullable().optional(),
   phone_number: z.string().min(5, 'Invalid phone number'),
-  contact_name: z.string().optional(),
+  contact_name: z.string().nullable().optional(),
   direction: z.enum(['inbound', 'outbound']).default('inbound'),
   sender_type: z.enum(['customer', 'ai', 'employee']).default('customer'),
   message_type: z.enum(['text', 'image', 'video', 'audio', 'document', 'location', 'contact', 'sticker', 'interactive', 'template', 'reaction', 'unknown']).default('text'),
-  content: z.string().optional().default(''),
-  media_url: z.string().optional(),
-  media_mime_type: z.string().optional(),
-  caption: z.string().optional(),
-  metadata: z.record(z.any()).optional()
+  content: z.string().nullable().optional().default(''),
+  media_url: z.string().nullable().optional(),
+  media_mime_type: z.string().nullable().optional(),
+  caption: z.string().nullable().optional(),
+  timestamp: z.union([z.string(), z.number()]).nullable().optional(),
+  metadata: z.record(z.any()).nullable().optional()
 })
 
 const n8nStatusSchema = z.object({
   wa_message_id: z.string(),
   status: z.enum(['pending', 'sent', 'delivered', 'read', 'failed']),
-  timestamp: z.string().optional(),
-  error_code: z.string().optional(),
-  error_detail: z.string().optional()
+  timestamp: z.string().nullable().optional(),
+  error_code: z.string().nullable().optional(),
+  error_detail: z.string().nullable().optional()
 })
 
 // GET /api/webhook/n8n/mode/:phone - Query conversation AI/Human mode for n8n workflow routing
@@ -83,8 +95,8 @@ router.get('/mode/:phone', requireN8nApiKey, async (req, res, next) => {
   }
 })
 
-// POST /api/webhook/n8n/message (and /incoming alias) - Receive inbound or AI outbound messages from n8n
-router.post(['/message', '/incoming'], requireN8nApiKey, async (req, res, next) => {
+// POST /api/webhook/n8n (and /message, /incoming) - Receive inbound or AI outbound messages from n8n
+router.post(['/', '', '/message', '/incoming'], requireN8nApiKey, async (req, res, next) => {
   try {
     const parseResult = n8nMessageSchema.safeParse(req.body)
     if (!parseResult.success) {
@@ -106,6 +118,7 @@ router.post(['/message', '/incoming'], requireN8nApiKey, async (req, res, next) 
       media_url,
       media_mime_type,
       caption,
+      timestamp,
       metadata
     } = parseResult.data
 
@@ -128,7 +141,8 @@ router.post(['/message', '/incoming'], requireN8nApiKey, async (req, res, next) 
     `, [cleanPhone, `%${cleanPhone.slice(-10)}`])
 
     let conv = convRes.rows[0]
-    const preview = content ? (content.length > 80 ? content.substring(0, 77) + '...' : content) : `[${message_type}]`
+    const textContent = content || ''
+    const preview = textContent ? (textContent.length > 80 ? textContent.substring(0, 77) + '...' : textContent) : `[${message_type}]`
     const expiryIso = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
     let conversationId = null
 
@@ -164,9 +178,9 @@ router.post(['/message', '/incoming'], requireN8nApiKey, async (req, res, next) 
       const params = [preview]
       let pIdx = 2
 
-      if (contact_name && !conv.contact_name) {
+      if (contact_name && contact_name.trim()) {
         updates.push(`contact_name = $${pIdx++}`)
-        params.push(contact_name)
+        params.push(contact_name.trim())
       }
 
       if (direction === 'inbound') {
@@ -177,6 +191,19 @@ router.post(['/message', '/incoming'], requireN8nApiKey, async (req, res, next) 
 
       params.push(conversationId)
       await query(`UPDATE public.conversations SET ${updates.join(', ')} WHERE id = $${pIdx}`, params)
+    }
+
+    // Determine message creation timestamp (preserve Meta original timestamp if valid)
+    let messageCreatedAt = new Date()
+    if (timestamp) {
+      const tsNum = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10)
+      if (!isNaN(tsNum)) {
+        const ms = tsNum < 1e11 ? tsNum * 1000 : tsNum
+        const d = new Date(ms)
+        if (!isNaN(d.getTime())) {
+          messageCreatedAt = d
+        }
+      }
     }
 
     // 3. Insert message
@@ -192,8 +219,9 @@ router.post(['/message', '/incoming'], requireN8nApiKey, async (req, res, next) 
         media_mime_type,
         caption,
         delivery_status,
-        metadata
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        metadata,
+        created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING id, created_at
     `, [
       conversationId,
@@ -201,12 +229,13 @@ router.post(['/message', '/incoming'], requireN8nApiKey, async (req, res, next) 
       direction,
       sender_type,
       message_type,
-      content,
+      textContent,
       media_url || null,
       media_mime_type || null,
       caption || null,
       direction === 'inbound' ? 'delivered' : 'sent',
-      metadata ? JSON.stringify(metadata) : null
+      metadata ? JSON.stringify(metadata) : null,
+      messageCreatedAt.toISOString()
     ])
 
     const savedMessage = {
@@ -216,7 +245,7 @@ router.post(['/message', '/incoming'], requireN8nApiKey, async (req, res, next) 
       direction,
       sender_type,
       message_type,
-      content,
+      content: textContent,
       media_url,
       caption,
       delivery_status: direction === 'inbound' ? 'delivered' : 'sent',
