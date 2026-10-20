@@ -47,3 +47,5 @@ dist-ssr
 
 .vercel
 .env*
+server/integrations/live_*
+server/integrations/backups/live_*
