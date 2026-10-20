@@ -55,6 +55,17 @@ const n8nStatusSchema = z.object({
   error_detail: z.string().nullable().optional()
 })
 
+const n8nLeadSchema = z.object({
+  phone: z.string().min(5, 'Invalid phone number'),
+  name: z.string().nullable().optional(),
+  business: z.string().nullable().optional(),
+  service: z.string().nullable().optional(),
+  purpose: z.string().nullable().optional(),
+  language: z.string().nullable().optional(),
+  source: z.string().nullable().optional().default('WhatsApp Inbound'),
+  received_at: z.string().nullable().optional()
+})
+
 // GET /api/webhook/n8n/mode/:phone - Query conversation AI/Human mode for n8n workflow routing
 router.get('/mode/:phone', requireN8nApiKey, async (req, res, next) => {
   try {
@@ -308,6 +319,245 @@ router.post('/status', requireN8nApiKey, async (req, res, next) => {
     }
 
     res.json({ success: true, updated: Boolean(message) })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// POST /api/webhook/n8n/lead - Ingest single qualified lead from n8n into CRM
+router.post('/lead', requireN8nApiKey, async (req, res, next) => {
+  try {
+    const parseResult = n8nLeadSchema.safeParse(req.body)
+    if (!parseResult.success) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', details: parseResult.error.errors }
+      })
+    }
+
+    const {
+      phone,
+      name,
+      business,
+      service,
+      purpose,
+      language,
+      source,
+      received_at
+    } = parseResult.data
+
+    const cleanPhone = phone.replace(/[^0-9]/g, '')
+    if (cleanPhone.length < 7) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_PHONE', message: 'Phone number too short' } })
+    }
+
+    // Deduplication check by phone (exact or last 10 digits)
+    const existingRes = await query(`
+      SELECT id, name, business_name, lifecycle_status, notes, requirement
+      FROM public.clients
+      WHERE is_deleted = false AND (whatsapp_phone = $1 OR whatsapp_phone LIKE $2)
+      LIMIT 1
+    `, [cleanPhone, `%${cleanPhone.slice(-10)}`])
+
+    const existing = existingRes.rows[0]
+
+    // Normalize language to allowed enum: 'English' | 'Hindi' | 'Hinglish' | 'Marathi'
+    const langNormalized = ['English', 'Hindi', 'Hinglish', 'Marathi'].find(
+      l => l.toLowerCase() === (language || '').toLowerCase().trim()
+    ) || 'English'
+
+    let clientRecord = null
+    let actionTaken = 'created'
+
+    if (existing) {
+      // Preserve existing manual edits; only fill in missing fields
+      const updates = ['updated_at = CURRENT_TIMESTAMP']
+      const params = []
+      let pIdx = 1
+
+      if (!existing.business_name && business) {
+        updates.push(`business_name = $${pIdx++}`)
+        params.push(business)
+      }
+      if (!existing.requirement && purpose) {
+        updates.push(`requirement = $${pIdx++}`)
+        params.push(purpose)
+      }
+      if ((existing.name === 'WhatsApp Contact' || !existing.name) && name && name !== cleanPhone) {
+        updates.push(`name = $${pIdx++}`)
+        params.push(name)
+      }
+
+      params.push(existing.id)
+      await query(`UPDATE public.clients SET ${updates.join(', ')} WHERE id = $${pIdx}`, params)
+      clientRecord = existing
+      actionTaken = 'updated'
+    } else {
+      const clientName = (name && name.trim()) || 'WhatsApp Contact'
+      const insertRes = await query(`
+        INSERT INTO public.clients (
+          name,
+          whatsapp_phone,
+          business_name,
+          service_category,
+          requirement,
+          language,
+          country,
+          lead_source,
+          lifecycle_status,
+          notes,
+          created_at,
+          updated_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, 'India', $7, 'new_lead', $8,
+          COALESCE($9::timestamptz, CURRENT_TIMESTAMP),
+          CURRENT_TIMESTAMP
+        )
+        RETURNING id, name, whatsapp_phone, business_name, lifecycle_status
+      `, [
+        clientName,
+        cleanPhone,
+        business || null,
+        service || 'WhatsApp AI Automation',
+        purpose || null,
+        langNormalized,
+        source || 'WhatsApp Inbound',
+        language ? `Captured via WhatsApp bot (${langNormalized})` : 'Captured via WhatsApp bot',
+        received_at || null
+      ])
+      clientRecord = insertRes.rows[0]
+      actionTaken = 'created'
+    }
+
+    // Link or update conversation contact_name
+    await query(`
+      UPDATE public.conversations
+      SET client_id = $1,
+          contact_name = CASE WHEN contact_name IS NULL OR contact_name = phone_number THEN $2 ELSE contact_name END
+      WHERE phone_number = $3 OR phone_number LIKE $4
+    `, [clientRecord.id, clientRecord.name, cleanPhone, `%${cleanPhone.slice(-10)}`])
+
+    // Broadcast realtime CRM lead event
+    sseManager.broadcast('lead_captured', {
+      clientId: clientRecord.id,
+      name: clientRecord.name,
+      phone: cleanPhone,
+      business: business || clientRecord.business_name,
+      action: actionTaken
+    })
+
+    res.json({
+      success: true,
+      action: actionTaken,
+      data: {
+        id: clientRecord.id,
+        phone: cleanPhone,
+        name: clientRecord.name
+      }
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// POST /api/webhook/n8n/sync-leads - Batch sync historical leads from Google Sheets into CRM
+router.post('/sync-leads', requireN8nApiKey, async (req, res, next) => {
+  try {
+    const leads = Array.isArray(req.body) ? req.body : req.body.leads
+    if (!Array.isArray(leads)) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_PAYLOAD', message: 'Expected an array of leads' } })
+    }
+
+    let created = 0
+    let updated = 0
+    let skipped = 0
+    let failed = 0
+    const errors = []
+
+    for (const item of leads) {
+      try {
+        const phone = String(item.phone || item.whatsapp_phone || item.Phone || '').replace(/[^0-9]/g, '')
+        if (phone.length < 7) {
+          skipped++
+          continue
+        }
+
+        const name = item.name || item.Name || 'WhatsApp Contact'
+        const business = item.business || item.Business || item['Business Name'] || null
+        const purpose = item.purpose || item.Purpose || item.requirement || null
+        const service = item.service || item.Service || 'WhatsApp AI Automation'
+        const language = item.language || item.Language || 'English'
+        const source = item.source || item.Source || 'Google Sheets Sync'
+
+        const langNormalized = ['English', 'Hindi', 'Hinglish', 'Marathi'].find(
+          l => l.toLowerCase() === (language || '').toLowerCase().trim()
+        ) || 'English'
+
+        const existingRes = await query(`
+          SELECT id, name, business_name, requirement
+          FROM public.clients
+          WHERE is_deleted = false AND (whatsapp_phone = $1 OR whatsapp_phone LIKE $2)
+          LIMIT 1
+        `, [phone, `%${phone.slice(-10)}`])
+
+        if (existingRes.rows.length > 0) {
+          const ex = existingRes.rows[0]
+          // Preserve existing non-empty fields
+          const updates = ['updated_at = CURRENT_TIMESTAMP']
+          const params = []
+          let pIdx = 1
+
+          if (!ex.business_name && business) {
+            updates.push(`business_name = $${pIdx++}`)
+            params.push(business)
+          }
+          if (!ex.requirement && purpose) {
+            updates.push(`requirement = $${pIdx++}`)
+            params.push(purpose)
+          }
+
+          params.push(ex.id)
+          await query(`UPDATE public.clients SET ${updates.join(', ')} WHERE id = $${pIdx}`, params)
+          updated++
+        } else {
+          await query(`
+            INSERT INTO public.clients (
+              name,
+              whatsapp_phone,
+              business_name,
+              service_category,
+              requirement,
+              language,
+              country,
+              lead_source,
+              lifecycle_status,
+              notes,
+              created_at,
+              updated_at
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6, 'India', $7, 'new_lead', 'Synced from Google Sheets WhatsApp Leads',
+              CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+          `, [name, phone, business, service, purpose, langNormalized, source])
+          created++
+        }
+      } catch (err) {
+        failed++
+        errors.push(err.message)
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        total_processed: leads.length,
+        created,
+        updated,
+        skipped,
+        failed,
+        errors: errors.slice(0, 5)
+      }
+    })
   } catch (err) {
     next(err)
   }

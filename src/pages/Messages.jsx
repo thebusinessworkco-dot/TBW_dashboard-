@@ -6,6 +6,81 @@ import { useApp } from '../lib/store'
 import { clock } from '../lib/format'
 import { api } from '../lib/api'
 
+function InteractivePayloadView({ message }) {
+  const meta = typeof message.metadata === 'string' ? (() => { try { return JSON.parse(message.metadata) } catch { return {} } })() : (message.metadata || {})
+
+  // 1. Structured interactive payload from Meta / n8n in message.metadata
+  const inter = meta?.interactive || (meta?.type === 'interactive' ? meta : null)
+  if (inter) {
+    if (inter.type === 'list') {
+      const actionBtn = inter.action?.button || 'Select Option'
+      const sections = inter.action?.sections || []
+      return (
+        <div className="interactive-options-box">
+          <div className="interactive-header">
+            <span>🔘 {actionBtn}</span>
+          </div>
+          {sections.map((sec, sIdx) => (
+            <div key={sIdx} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              {sec.title ? <small style={{ fontWeight: 600, opacity: 0.8 }}>{sec.title}</small> : null}
+              {(sec.rows || []).map((row) => (
+                <div key={row.id || row.title} className="interactive-option-row">
+                  <strong>{row.title}</strong>
+                  {row.description ? <small>{row.description}</small> : null}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )
+    }
+
+    if (inter.type === 'button') {
+      const buttons = inter.action?.buttons || []
+      return (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+          {buttons.map((btn, bIdx) => {
+            const btnTitle = btn.reply?.title || btn.text || 'Button'
+            const btnId = btn.reply?.id || btn.id || bIdx
+            return (
+              <span key={btnId} className="interactive-btn-pill">
+                ⏹️ {btnTitle}
+              </span>
+            )
+          })}
+        </div>
+      )
+    }
+
+    // Customer selection contained inside inter (list_reply or button_reply)
+    if (inter.type === 'list_reply' || inter.type === 'button_reply') {
+      const replyData = inter.list_reply || inter.button_reply || {}
+      const chosenTitle = replyData.title || replyData.id
+      if (chosenTitle) {
+        return (
+          <div className="interactive-reply-badge">
+            <span>✓ Selected: {chosenTitle}</span>
+          </div>
+        )
+      }
+    }
+  }
+
+  // 2. Direct list_reply or button_reply in meta
+  if (meta?.list_reply || meta?.button_reply) {
+    const chosenTitle = meta?.list_reply?.title || meta?.button_reply?.title || meta?.list_reply?.id || meta?.button_reply?.id
+    if (chosenTitle) {
+      return (
+        <div className="interactive-reply-badge">
+          <span>✓ Selected: {chosenTitle}</span>
+        </div>
+      )
+    }
+  }
+
+  return null
+}
+
 export default function Messages() {
   const { params, toast } = useApp()
   const [conversations, setConversations] = useState([])
@@ -26,7 +101,9 @@ export default function Messages() {
   const thread = useRef(null)
 
   const activeIdRef = useRef(activeId)
-  activeIdRef.current = activeId
+  useEffect(() => {
+    activeIdRef.current = activeId
+  }, [activeId])
 
   // 1. Fetch conversations from backend
   const loadConversations = useCallback(async () => {
@@ -419,6 +496,7 @@ export default function Messages() {
                         ) : null}
 
                         <p>{m.content}</p>
+                        <InteractivePayloadView message={m} />
 
                         <small>
                           {m.created_at ? clock(new Date(m.created_at)) : ''}

@@ -9,7 +9,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node test/serverless_api_test.js && node test/integration_suite_test.js",
+    "test": "node test/serverless_api_test.js && node test/integration_suite_test.js && node test/crm_leads_isolated_test.js && node test/interactive_messages_audit_test.js",
     "test:api": "node test/serverless_api_test.js",
     "test:integration": "node test/integration_suite_test.js",
     "migrate:data": "node database/migrate_data.js"

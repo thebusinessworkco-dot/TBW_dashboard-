@@ -17,22 +17,6 @@ const logAutomationSchema = z.object({
 // GET /api/automation/status - n8n automation monitoring status
 router.get('/status', requireAuth, requireRole('admin', 'owner'), async (req, res, next) => {
   try {
-    // Ensure default workflows exist in table
-    const countRes = await query('SELECT COUNT(*)::int as c FROM automation_integrations')
-    if (countRes.rows[0]?.c === 0) {
-      const defaultFlows = [
-        ['WhatsApp AI & Lead Capture Router', 'tbw-wa-router-v1', 'whatsapp', 'success'],
-        ['Google Sheets Lead Sync', 'tbw-sheets-sync-v1', 'sheets', 'success'],
-        ['Quotation Sign-off Notification', 'tbw-quote-notify-v1', 'notification', 'success']
-      ]
-      for (const f of defaultFlows) {
-        await query(
-          'INSERT INTO automation_integrations (workflow_name, workflow_id, type, last_status, last_execution) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)',
-          [f[0], f[1], f[2], f[3]]
-        )
-      }
-    }
-
     const workflows = await query('SELECT * FROM automation_integrations ORDER BY updated_at DESC')
     const recentErrors = await query("SELECT * FROM automation_integrations WHERE last_status = 'error'")
 

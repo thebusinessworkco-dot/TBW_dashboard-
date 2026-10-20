@@ -233,7 +233,7 @@ export default function Settings() {
                   <label className="field">
                     <span>Time zone</span>
                     <select value={prefs.timezone} onChange={setPref('timezone')}>
-                      {['Asia/Dhaka (GMT+6)', 'Asia/Dubai (GMT+4)', 'Europe/London (GMT+1)', 'America/New_York (GMT-4)'].map((z) => (
+                      {['Asia/Kolkata (GMT+5:30)', 'Asia/Dubai (GMT+4)', 'Europe/London (GMT+1)', 'America/New_York (GMT-4)'].map((z) => (
                         <option key={z}>{z}</option>
                       ))}
                     </select>

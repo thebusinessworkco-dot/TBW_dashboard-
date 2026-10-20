@@ -11,20 +11,20 @@ export const USER = {
 }
 
 export const CURRENCIES = {
-  USD: { code: 'USD', symbol: '$', rate: 1, flag: 'us', name: 'US Dollar' },
-  EUR: { code: 'EUR', symbol: '€', rate: 0.92, flag: 'de', name: 'Euro' },
-  GBP: { code: 'GBP', symbol: '£', rate: 0.79, flag: 'gb', name: 'British Pound' },
+  INR: { code: 'INR', symbol: '₹', rate: 1, flag: 'in', name: 'Indian Rupee' },
+  USD: { code: 'USD', symbol: '$', rate: 0.012, flag: 'us', name: 'US Dollar' },
+  EUR: { code: 'EUR', symbol: '€', rate: 0.011, flag: 'de', name: 'Euro' },
+  GBP: { code: 'GBP', symbol: '£', rate: 0.0095, flag: 'gb', name: 'British Pound' },
 }
 
-export const BALANCE_USD = 689372
+export const BALANCE_USD = 0
 
 export const WALLETS = [
-  { id: 'usd', code: 'USD', flag: 'us', symbol: '$', amount: 22678, limit: '$10k', status: 'active' },
-  { id: 'eur', code: 'EUR', flag: 'de', symbol: '€', amount: 18345, limit: '€8k', status: 'active' },
-  { id: 'gbp', code: 'GBP', flag: 'gb', symbol: '£', amount: 15000, limit: '£7.5k', status: 'inactive' },
-  { id: 'jpy', code: 'JPY', flag: 'jp', symbol: '¥', amount: 125000, limit: '¥1.2m', status: 'active' },
-  { id: 'cad', code: 'CAD', flag: 'ca', symbol: 'C$', amount: 9420, limit: 'C$6k', status: 'active' },
-  { id: 'aed', code: 'AED', flag: 'ae', symbol: 'AED ', amount: 36800, limit: 'AED 20k', status: 'inactive' },
+  { id: 'inr', code: 'INR', flag: 'in', symbol: '₹', amount: 0, limit: '₹5L', status: 'active' },
+  { id: 'usd', code: 'USD', flag: 'us', symbol: '$', amount: 0, limit: '$10k', status: 'inactive' },
+  { id: 'eur', code: 'EUR', flag: 'de', symbol: '€', amount: 0, limit: '€8k', status: 'inactive' },
+  { id: 'gbp', code: 'GBP', flag: 'gb', symbol: '£', amount: 0, limit: '£7.5k', status: 'inactive' },
+  { id: 'aed', code: 'AED', flag: 'ae', symbol: 'AED ', amount: 0, limit: 'AED 20k', status: 'inactive' },
 ]
 
 export const STATS = [

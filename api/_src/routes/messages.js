@@ -69,6 +69,7 @@ router.get('/', requireAuth, requireRole('support', 'sales', 'admin', 'owner'), 
         m.caption,
         m.delivery_status,
         m.error_message,
+        m.metadata,
         m.created_at,
         u.name as sender_name
       FROM public.messages m

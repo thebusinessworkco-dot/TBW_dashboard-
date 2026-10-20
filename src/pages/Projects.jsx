@@ -176,10 +176,10 @@ export default function Projects() {
         <Kpi
           icon="bolt"
           label="Automation Engine (n8n)"
-          value={automation?.active_workflows || 3}
+          value={automation?.active_workflows || automation?.total_workflows || 0}
           format={(n) => `${n} Workflows`}
-          note={automation?.healthy ? '100% Operational' : 'Review Errors'}
-          tone={automation?.healthy ? 'green' : 'amber'}
+          note={automation?.healthy === null ? 'Status Unknown' : automation?.healthy ? 'Operational' : 'Review Errors'}
+          tone={automation?.healthy ? 'green' : automation?.healthy === false ? 'amber' : 'neutral'}
         />
       </div>
 
@@ -301,22 +301,30 @@ export default function Projects() {
               <span
                 className="pill-tag"
                 style={{
-                  background: automation?.healthy ? 'rgba(34, 197, 94, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                  color: automation?.healthy ? '#16a34a' : '#d97706',
+                  background: automation?.healthy ? 'rgba(34, 197, 94, 0.15)' : automation?.healthy === false ? 'rgba(245, 158, 11, 0.15)' : 'var(--soft)',
+                  color: automation?.healthy ? '#16a34a' : automation?.healthy === false ? '#d97706' : 'var(--muted)',
                   fontWeight: 700
                 }}
               >
-                {automation?.healthy ? 'Active & Healthy' : 'Warning'}
+                {automation?.healthy ? 'Active & Healthy' : automation?.healthy === false ? 'Warning' : 'Unknown'}
               </span>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {(automation?.workflows || []).map((w) => (
-                <div key={w.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '8px 10px', background: 'var(--soft)', borderRadius: '8px' }}>
-                  <span>{w.workflow_name}</span>
-                  <span style={{ color: 'var(--green)', fontWeight: 600 }}>Operational</span>
+              {(automation?.workflows || []).length === 0 ? (
+                <div style={{ fontSize: '12px', color: 'var(--muted)', padding: '8px 0' }}>
+                  No automation workflows connected yet.
                 </div>
-              ))}
+              ) : (
+                (automation?.workflows || []).map((w) => (
+                  <div key={w.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '8px 10px', background: 'var(--soft)', borderRadius: '8px' }}>
+                    <span>{w.workflow_name}</span>
+                    <span style={{ color: w.last_status === 'success' ? 'var(--green)' : w.last_status === 'error' ? 'var(--red)' : 'var(--muted)', fontWeight: 600 }}>
+                      {w.last_status === 'success' ? 'Operational' : w.last_status === 'error' ? 'Error' : 'Unknown'}
+                    </span>
+                  </div>
+                ))
+              )}
             </div>
           </section>
         </div>

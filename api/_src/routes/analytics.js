@@ -389,7 +389,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
           followups_due: followupsDue
         },
         automation: {
-          healthy: automationErrors.length === 0,
+          healthy: automationRows.length === 0 ? null : automationErrors.length === 0,
           total_workflows: automationRows.length,
           active_workflows: automationRows.filter(w => w.is_active).length,
           recent_errors_count: automationErrors.length,

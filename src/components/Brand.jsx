@@ -109,6 +109,26 @@ const FLAG_ART = {
       <rect width="5.6" height="20" fill="#d6303d" />
     </>
   ),
+  in: (
+    <>
+      <rect width="20" height="6.67" fill="#ff9933" />
+      <rect y="6.67" width="20" height="6.66" fill="#ffffff" />
+      <rect y="13.33" width="20" height="6.67" fill="#138808" />
+      <circle cx="10" cy="10" r="2.4" fill="none" stroke="#000080" strokeWidth="0.6" />
+      <circle cx="10" cy="10" r="0.6" fill="#000080" />
+      {[...Array(12)].map((_, i) => (
+        <line
+          key={i}
+          x1="10"
+          y1="10"
+          x2={10 + 2.3 * Math.cos((i * Math.PI) / 6)}
+          y2={10 + 2.3 * Math.sin((i * Math.PI) / 6)}
+          stroke="#000080"
+          strokeWidth="0.35"
+        />
+      ))}
+    </>
+  ),
 }
 
 export function Flag({ code, size = 18 }) {
@@ -118,7 +138,7 @@ export function Flag({ code, size = 18 }) {
       <clipPath id={id}>
         <circle cx="10" cy="10" r="10" />
       </clipPath>
-      <g clipPath={`url(#${id})`}>{FLAG_ART[code] ?? FLAG_ART.us}</g>
+      <g clipPath={`url(#${id})`}>{FLAG_ART[code] ?? FLAG_ART['in'] ?? FLAG_ART.us}</g>
       <circle cx="10" cy="10" r="9.6" fill="none" stroke="rgba(0,0,0,.08)" strokeWidth=".8" />
     </svg>
   )

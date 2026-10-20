@@ -7,21 +7,30 @@ import { useApp } from '../lib/store'
 import { money } from '../lib/format'
 
 const CONTROLS = [
-  { key: 'online', icon: 'globe', label: 'Online payments', body: 'Shops, subscriptions and in-app purchases' },
-  { key: 'contactless', icon: 'contactless', label: 'Contactless', body: 'Tap to pay up to $250 per payment' },
-  { key: 'atm', icon: 'bank', label: 'ATM withdrawals', body: 'Up to $1,000 per day' },
-  { key: 'abroad', icon: 'plane', label: 'Use abroad', body: 'Payments outside Bangladesh' },
+  { key: 'online', icon: 'globe', label: 'Online payments', body: 'Software, servers and vendor subscriptions' },
+  { key: 'contactless', icon: 'contactless', label: 'Contactless', body: 'Tap to pay up to ₹5,000 per transaction' },
+  { key: 'atm', icon: 'bank', label: 'ATM withdrawals', body: 'Up to ₹50,000 per day' },
+  { key: 'abroad', icon: 'plane', label: 'Use abroad', body: 'International payments and software licenses' },
 ]
 
 export default function Manage() {
   const { cards, setCards, spend, setSpend, wallets, setWallets, setWalletStatus, openModal, toast } = useApp()
-  const [selId, setSelId] = useState(cards[0]?.id)
+  const fallbackCard = {
+    id: 'agency-card-01',
+    number: '4242 •••• •••• 1024',
+    holder: 'The Business Work',
+    expires: '12/28',
+    skin: 'slate',
+    frozen: false,
+    controls: { online: true, contactless: true, atm: false, abroad: true }
+  }
+  const [selId, setSelId] = useState(cards[0]?.id || fallbackCard.id)
   const [flipped, setFlipped] = useState(false)
   const [reveal, setReveal] = useState(false)
-  const card = cards.find((c) => c.id === selId) ?? cards[0]
+  const card = cards.find((c) => c.id === selId) ?? cards[0] ?? fallbackCard
 
   const patchCard = (patch) => setCards((list) => list.map((c) => (c.id === card.id ? { ...c, ...patch } : c)))
-  const pct = Math.min(100, (spend.spent / spend.limit) * 100)
+  const pct = Math.min(100, (spend.spent / (spend.limit || 1)) * 100)
 
   const pick = (id) => {
     setSelId(id)
@@ -150,8 +159,8 @@ export default function Manage() {
               aria-label="Monthly spending limit"
             />
             <div className="le-scale">
-              <span>$1,000</span>
-              <span>$20,000</span>
+              <span>₹10,000</span>
+              <span>₹2,00,000</span>
             </div>
             <div className="le-used">
               <div className="limit-bar">

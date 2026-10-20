@@ -90,7 +90,7 @@ export default function Overview() {
   const quotations = data?.quotations || { total: 0, sent: 0, accepted: 0, rejected: 0, acceptance_rate: 0 }
   const projects = data?.projects || { total: 0, active: 0, completed: 0, total_tasks: 0, completed_tasks: 0, overdue_tasks: 0 }
   const appointments = data?.appointments || { total: 0, scheduled: 0, completed: 0, followups_due: 0 }
-  const automation = data?.automation || { healthy: true, total_workflows: 3, recent_errors_count: 0 }
+  const automation = data?.automation || { healthy: null, total_workflows: 0, recent_errors_count: 0 }
   const profitability = data?.profitability || { clients: [], services: [] }
 
   // Prepare chart series from backend timeline
@@ -166,7 +166,7 @@ export default function Overview() {
                 </div>
                 <strong>₹{finance.mrr.toLocaleString('en-IN')}/mo</strong>
                 <small>{finance.active_subscriptions} active client subscriptions</small>
-                <em>Healthy Cashflow</em>
+                <em>{finance.mrr > 0 ? 'Active Retainers' : 'No Active Subscriptions'}</em>
               </div>
 
               <div className="wallet active" style={{ '--w': 1 }}>
@@ -341,11 +341,11 @@ export default function Overview() {
               {/* n8n Status */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--soft)', borderRadius: '10px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: automation.healthy ? 'var(--green)' : 'var(--red)' }} />
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: automation.healthy === null ? 'var(--muted)' : automation.healthy ? 'var(--green)' : 'var(--red)' }} />
                   <span style={{ fontSize: '13px', fontWeight: 500 }}>n8n Workflow Engine</span>
                 </div>
-                <span style={{ fontSize: '12px', fontWeight: 600, color: automation.healthy ? 'var(--green)' : 'var(--red)' }}>
-                  {automation.healthy ? '100% Operational' : `${automation.recent_errors_count} Errors`}
+                <span style={{ fontSize: '12px', fontWeight: 600, color: automation.healthy === null ? 'var(--muted)' : automation.healthy ? 'var(--green)' : 'var(--red)' }}>
+                  {automation.healthy === null ? 'Checking Status' : automation.healthy ? `${automation.active_workflows || automation.total_workflows} Active Flows` : `${automation.recent_errors_count} Errors`}
                 </span>
               </div>
 

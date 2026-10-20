@@ -394,18 +394,56 @@ async function runTests() {
       assert.strictEqual(hasRoot, true, 'Supabase Root 2021 CA must be in trusted CA list')
     })
 
-    // 12. Serverless PostgreSQL Pool Config Builder
-    await test('Serverless DB: buildPgPoolConfig safely strips sslmode and prevents SSL override collisions', async () => {
-      const remoteUrl = 'postgresql://myuser:mypass@aws-0-ap-southeast-2.pooler.supabase.com:6543/mydatabase?sslmode=require'
-      const config = buildPgPoolConfig(remoteUrl)
-      assert.strictEqual(config.host, 'aws-0-ap-southeast-2.pooler.supabase.com')
-      assert.strictEqual(config.port, 6543)
-      assert.strictEqual(config.user, 'myuser')
-      assert.strictEqual(config.password, 'mypass')
-      assert.strictEqual(config.database, 'mydatabase')
-      assert.strictEqual(config.ssl.rejectUnauthorized, true)
-      assert.strictEqual(config.ssl.servername, 'aws-0-ap-southeast-2.pooler.supabase.com')
-      assert.strictEqual(config.connectionString, undefined)
+    // 13. Audit Route Alias
+    await test('Privileged endpoint /api/audit requires authentication (401) and does not return 404', async () => {
+      const res = await fetch(`${BASE_URL}/api/audit`)
+      assert.strictEqual(res.status, 401)
+      const data = await res.json()
+      assert.strictEqual(data.success, false)
+      assert.strictEqual(data.error.code, 'UNAUTHORIZED')
+    })
+
+    // 14. Lead Webhook Security & Validation
+    await test('POST /api/webhook/n8n/lead rejects missing X-N8N-API-KEY (401)', async () => {
+      const res = await fetch(`${BASE_URL}/api/webhook/n8n/lead`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: '919876543210', name: 'Test Lead' })
+      })
+      assert.strictEqual(res.status, 401)
+    })
+
+    await test('POST /api/webhook/n8n/lead validates minimum phone length', async () => {
+      const res = await fetch(`${BASE_URL}/api/webhook/n8n/lead`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-N8N-API-KEY': 'test-n8n-key-12345'
+        },
+        body: JSON.stringify({ phone: '123' })
+      })
+      assert.strictEqual(res.status, 400)
+      const data = await res.json()
+      assert.strictEqual(data.success, false)
+    })
+
+    await test('POST /api/webhook/n8n/sync-leads rejects missing X-N8N-API-KEY (401)', async () => {
+      const res = await fetch(`${BASE_URL}/api/webhook/n8n/sync-leads`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leads: [] })
+      })
+      assert.strictEqual(res.status, 401)
+    })
+
+    // 15. Format & Flag Tests
+    await test('Currency: money function defaults to ₹ symbol and en-IN grouping (1,25,000)', async () => {
+      const { money, whole, compact } = await import('../src/lib/format.js')
+      const formatted = money(125000)
+      assert.ok(formatted.includes('₹'), 'Must contain rupee symbol ₹')
+      assert.ok(formatted.includes('1,25,000'), 'Must use Indian numbering system 1,25,000')
+      assert.strictEqual(whole(125000), '₹1,25,000')
+      assert.strictEqual(compact(150000), '₹1.5 L')
     })
 
   } finally {

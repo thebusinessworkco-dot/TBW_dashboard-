@@ -3,22 +3,30 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 export { MONTHS, DAYS }
 
-export const money = (n, symbol = '$', dp = 2) => {
-  const sign = n < 0 ? '-' : ''
+export const money = (n, symbol = '₹', dp = 2) => {
+  const num = Number(n) || 0
+  const sign = num < 0 ? '-' : ''
+  const locale = symbol === '$' ? 'en-US' : 'en-IN'
   return (
     sign +
     symbol +
-    Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp })
+    Math.abs(num).toLocaleString(locale, { minimumFractionDigits: dp, maximumFractionDigits: dp })
   )
 }
 
-export const whole = (n, symbol = '$') => money(n, symbol, 0)
+export const whole = (n, symbol = '₹') => money(n, symbol, 0)
 
-export const compact = (n, symbol = '$') => {
-  const a = Math.abs(n)
-  if (a >= 1e6) return `${symbol}${(n / 1e6).toFixed(1).replace(/\.0$/, '')}m`
-  if (a >= 1e3) return `${symbol}${(n / 1e3).toFixed(1).replace(/\.0$/, '')}k`
-  return `${symbol}${n}`
+export const compact = (n, symbol = '₹') => {
+  const a = Math.abs(Number(n) || 0)
+  if (symbol === '₹') {
+    if (a >= 1e7) return `${symbol}${(a / 1e7).toFixed(2).replace(/\.00$/, '')} Cr`
+    if (a >= 1e5) return `${symbol}${(a / 1e5).toFixed(1).replace(/\.0$/, '')} L`
+    if (a >= 1e3) return `${symbol}${(a / 1e3).toFixed(1).replace(/\.0$/, '')}k`
+    return `${symbol}${a.toLocaleString('en-IN')}`
+  }
+  if (a >= 1e6) return `${symbol}${(a / 1e6).toFixed(1).replace(/\.0$/, '')}m`
+  if (a >= 1e3) return `${symbol}${(a / 1e3).toFixed(1).replace(/\.0$/, '')}k`
+  return `${symbol}${a}`
 }
 
 const two = (n) => String(n).padStart(2, '0')
