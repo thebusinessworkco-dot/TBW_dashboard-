@@ -206,13 +206,20 @@ router.post(['/', '', '/message', '/incoming'], requireN8nApiKey, async (req, re
 
     // Determine message creation timestamp (preserve Meta original timestamp if valid)
     let messageCreatedAt = new Date()
-    if (timestamp) {
-      const tsNum = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10)
-      if (!isNaN(tsNum)) {
-        const ms = tsNum < 1e11 ? tsNum * 1000 : tsNum
-        const d = new Date(ms)
-        if (!isNaN(d.getTime())) {
-          messageCreatedAt = d
+    if (timestamp !== undefined && timestamp !== null && timestamp !== '') {
+      if (typeof timestamp === 'string' && (timestamp.includes('T') || timestamp.includes('-') || isNaN(Number(timestamp)))) {
+        const isoDate = new Date(timestamp)
+        if (!isNaN(isoDate.getTime())) {
+          messageCreatedAt = isoDate
+        }
+      } else {
+        const tsNum = typeof timestamp === 'number' ? timestamp : Number(timestamp)
+        if (!isNaN(tsNum) && tsNum > 0) {
+          const ms = tsNum < 1e11 ? tsNum * 1000 : tsNum
+          const numDate = new Date(ms)
+          if (!isNaN(numDate.getTime())) {
+            messageCreatedAt = numDate
+          }
         }
       }
     }

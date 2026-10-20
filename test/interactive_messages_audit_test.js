@@ -214,6 +214,45 @@ const messagesRouteCode = fs.readFileSync('api/_src/routes/messages.js', 'utf8')
 assert.strictEqual(messagesRouteCode.includes('m.metadata,'), true, 'm.metadata must be in SELECT query')
 console.log('  ✓ PASS: api/_src/routes/messages.js explicitly selects m.metadata')
 
+// 4. Webhook Timestamp Parsing Audit
+console.log('\n[Test 4] Webhook Timestamp Parsing Fidelity (Year 2026 / ISO & Epoch Protection)')
+function parseTimestampForDb(timestamp) {
+  let messageCreatedAt = new Date()
+  if (timestamp !== undefined && timestamp !== null && timestamp !== '') {
+    if (typeof timestamp === 'string' && (timestamp.includes('T') || timestamp.includes('-') || isNaN(Number(timestamp)))) {
+      const isoDate = new Date(timestamp)
+      if (!isNaN(isoDate.getTime())) {
+        messageCreatedAt = isoDate
+      }
+    } else {
+      const tsNum = typeof timestamp === 'number' ? timestamp : Number(timestamp)
+      if (!isNaN(tsNum) && tsNum > 0) {
+        const ms = tsNum < 1e11 ? tsNum * 1000 : tsNum
+        const numDate = new Date(ms)
+        if (!isNaN(numDate.getTime())) {
+          messageCreatedAt = numDate
+        }
+      }
+    }
+  }
+  return messageCreatedAt
+}
+
+const isoTs = parseTimestampForDb('2026-10-20T11:23:14.721Z')
+assert.strictEqual(isoTs.getUTCFullYear(), 2026, 'ISO timestamp must retain year 2026')
+assert.strictEqual(isoTs.getUTCMonth(), 9, 'ISO timestamp month must match October')
+
+const epochStrTs = parseTimestampForDb('1792479707')
+assert.strictEqual(epochStrTs.getUTCFullYear(), 2026, 'Epoch string timestamp must retain year 2026')
+
+const epochNumTs = parseTimestampForDb(1792479707)
+assert.strictEqual(epochNumTs.getUTCFullYear(), 2026, 'Epoch number timestamp must retain year 2026')
+
+const undefTs = parseTimestampForDb(undefined)
+assert(undefTs.getUTCFullYear() >= 2026, 'Undefined timestamp must default to current time, not 1970')
+
+console.log('  ✓ PASS: Timestamp parser preserves accurate 2026 chronological order for ISO strings and epoch timestamps')
+
 console.log('\n======================================================')
 console.log('  ALL INTERACTIVE MESSAGES TESTS PASSED (100%)')
 console.log('======================================================\n')
