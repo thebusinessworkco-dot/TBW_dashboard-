@@ -177,7 +177,11 @@ router.post('/', requireAuth, requireRole('support', 'sales', 'admin', 'owner'),
         finalStatus = 'sent'
         finalWaId = metaResult.wa_message_id
         await query('UPDATE public.messages SET delivery_status = $1, wa_message_id = $2 WHERE id = $3', [finalStatus, finalWaId, messageId])
-      } else if (!metaResult.skipped && metaResult.error) {
+      } else if (metaResult.skipped) {
+        finalStatus = 'failed'
+        errorMessage = 'WhatsApp credentials (WA_ACCESS_TOKEN or WA_PHONE_NUMBER_ID) not configured on server'
+        await query('UPDATE public.messages SET delivery_status = $1, error_message = $2 WHERE id = $3', [finalStatus, errorMessage, messageId])
+      } else if (metaResult.error) {
         finalStatus = 'failed'
         errorMessage = metaResult.error
         await query('UPDATE public.messages SET delivery_status = $1, error_message = $2 WHERE id = $3', [finalStatus, errorMessage, messageId])
