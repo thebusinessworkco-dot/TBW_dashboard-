@@ -13,7 +13,8 @@ const router = Router({ mergeParams: true })
 const listMessagesSchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(100),
   offset: z.coerce.number().int().min(0).default(0),
-  since: z.string().optional()
+  since: z.string().optional(),
+  order: z.enum(['asc', 'desc']).optional()
 })
 
 const sendMessageSchema = z.object({
@@ -26,7 +27,7 @@ const sendMessageSchema = z.object({
 router.get('/', requireAuth, requireRole('support', 'sales', 'admin', 'owner'), validate({ query: listMessagesSchema }), async (req, res, next) => {
   try {
     const conversationId = parseInt(req.params.id, 10)
-    const { limit, offset, since } = req.query
+    const { limit, offset, since, order } = req.query
 
     const convRes = await query('SELECT id FROM public.conversations WHERE id = $1', [conversationId])
     if (convRes.rows.length === 0) {
@@ -54,30 +55,92 @@ router.get('/', requireAuth, requireRole('support', 'sales', 'admin', 'owner'), 
     const totalCount = countRes.rows[0]?.c || 0
 
     const queryParams = [...params, limit, offset]
-    const messagesRes = await query(`
-      SELECT
-        m.id,
-        m.conversation_id,
-        m.wa_message_id,
-        m.direction,
-        m.sender_type,
-        m.sender_id,
-        m.message_type,
-        m.content,
-        m.media_url,
-        m.media_mime_type,
-        m.caption,
-        m.delivery_status,
-        m.error_message,
-        m.metadata,
-        m.created_at,
-        u.name as sender_name
-      FROM public.messages m
-      LEFT JOIN public.users u ON m.sender_id = u.id
-      ${whereClause}
-      ORDER BY m.created_at ASC
-      LIMIT $${pIdx++} OFFSET $${pIdx++}
-    `, queryParams)
+    const limitPlaceholder = `$${pIdx++}`
+    const offsetPlaceholder = `$${pIdx++}`
+
+    let sql = ''
+    if (order === 'desc') {
+      sql = `
+        SELECT
+          m.id,
+          m.conversation_id,
+          m.wa_message_id,
+          m.direction,
+          m.sender_type,
+          m.sender_id,
+          m.message_type,
+          m.content,
+          m.media_url,
+          m.media_mime_type,
+          m.caption,
+          m.delivery_status,
+          m.error_message,
+          m.metadata,
+          m.created_at,
+          u.name as sender_name
+        FROM public.messages m
+        LEFT JOIN public.users u ON m.sender_id = u.id
+        ${whereClause}
+        ORDER BY m.created_at DESC, m.id DESC
+        LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}
+      `
+    } else if (since) {
+      sql = `
+        SELECT
+          m.id,
+          m.conversation_id,
+          m.wa_message_id,
+          m.direction,
+          m.sender_type,
+          m.sender_id,
+          m.message_type,
+          m.content,
+          m.media_url,
+          m.media_mime_type,
+          m.caption,
+          m.delivery_status,
+          m.error_message,
+          m.metadata,
+          m.created_at,
+          u.name as sender_name
+        FROM public.messages m
+        LEFT JOIN public.users u ON m.sender_id = u.id
+        ${whereClause}
+        ORDER BY m.created_at ASC, m.id ASC
+        LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}
+      `
+    } else {
+      // Chat default: Fetch the most recent messages up to limit, ordered chronologically (ASC)
+      sql = `
+        SELECT * FROM (
+          SELECT
+            m.id,
+            m.conversation_id,
+            m.wa_message_id,
+            m.direction,
+            m.sender_type,
+            m.sender_id,
+            m.message_type,
+            m.content,
+            m.media_url,
+            m.media_mime_type,
+            m.caption,
+            m.delivery_status,
+            m.error_message,
+            m.metadata,
+            m.created_at,
+            u.name as sender_name
+          FROM public.messages m
+          LEFT JOIN public.users u ON m.sender_id = u.id
+          ${whereClause}
+          ORDER BY m.created_at DESC, m.id DESC
+          LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}
+        ) sub
+        ORDER BY sub.created_at ASC, sub.id ASC
+      `
+    }
+
+    const messagesRes = await query(sql, queryParams)
 
     res.json({
       success: true,

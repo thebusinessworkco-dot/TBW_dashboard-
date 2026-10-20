@@ -81,6 +81,35 @@ function InteractivePayloadView({ message }) {
   return null
 }
 
+function dedupeMessages(items) {
+  if (!Array.isArray(items) || items.length === 0) return []
+  const seen = new Set()
+  const result = []
+  for (const m of items) {
+    if (!m) continue
+    const key = m.id ? `id_${m.id}` : (m.wa_message_id ? `wa_${m.wa_message_id}` : `m_${m.created_at}_${m.direction}_${m.content}`)
+    if (!seen.has(key)) {
+      seen.add(key)
+      result.push(m)
+    }
+  }
+  return result.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0))
+}
+
+function areMessagesEqual(prev, next) {
+  if (prev.length !== next.length) return false
+  return !next.some((item, idx) => {
+    const p = prev[idx]
+    if (!p) return true
+    return String(p.id) !== String(item.id) ||
+      p.delivery_status !== item.delivery_status ||
+      p.content !== item.content ||
+      p.error_message !== item.error_message ||
+      p.created_at !== item.created_at ||
+      JSON.stringify(p.metadata || {}) !== JSON.stringify(item.metadata || {})
+  })
+}
+
 export default function Messages() {
   const { params, toast } = useApp()
   const [conversations, setConversations] = useState([])
@@ -99,11 +128,27 @@ export default function Messages() {
   const [sending, setSending] = useState(false)
 
   const thread = useRef(null)
+  const isNearBottomRef = useRef(true)
 
   const activeIdRef = useRef(activeId)
   useEffect(() => {
     activeIdRef.current = activeId
   }, [activeId])
+
+  const scrollToBottom = useCallback((behavior = 'smooth') => {
+    const el = thread.current
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior })
+    }
+  }, [])
+
+  const handleScroll = useCallback(() => {
+    const el = thread.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    // Considered near bottom if within 100px
+    isNearBottomRef.current = distanceFromBottom <= 100
+  }, [])
 
   // 1. Fetch conversations from backend
   const loadConversations = useCallback(async () => {
@@ -147,33 +192,45 @@ export default function Messages() {
       return
     }
 
+    let cancelled = false
     setLoadingMsgs(true)
+    isNearBottomRef.current = true
+
     Promise.all([
       api.get(`/api/conversations/${activeId}/messages?limit=100`),
       api.get(`/api/conversations/${activeId}`)
     ]).then(([msgRes, detailRes]) => {
-      if (msgRes.success && msgRes.data?.items) {
-        setMessages(msgRes.data.items)
+      if (cancelled) return
+      if (msgRes?.success && msgRes.data?.items) {
+        setMessages(dedupeMessages(msgRes.data.items))
       }
-      if (detailRes.success && detailRes.data) {
+      if (detailRes?.success && detailRes.data) {
         setActiveDetails(detailRes.data)
       }
       // Reset unread locally in conversation list
       setConversations(list => list.map(c => String(c.id) === String(activeId) ? { ...c, unread_count: 0 } : c))
+      // Scroll to bottom of newly opened conversation
+      setTimeout(() => scrollToBottom('auto'), 50)
     }).catch(err => {
-      console.warn('Could not load conversation thread:', err.message)
+      if (!cancelled) console.warn('Could not load conversation thread:', err.message)
     }).finally(() => {
-      setLoadingMsgs(false)
+      if (!cancelled) setLoadingMsgs(false)
     })
-  }, [activeId])
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeId, scrollToBottom])
 
   // 4. Authenticated short-polling for serverless compatibility & realtime message updates
   useEffect(() => {
     let timer = null
     let activePoll = true
+    let inFlight = false
 
     const poll = async () => {
-      if (!activePoll) return
+      if (!activePoll || inFlight) return
+      inFlight = true
       const currentActiveId = activeIdRef.current
 
       try {
@@ -195,7 +252,8 @@ export default function Messages() {
                 p.last_message_at !== item.last_message_at ||
                 p.unread_count !== item.unread_count ||
                 p.mode !== item.mode ||
-                p.status !== item.status
+                p.status !== item.status ||
+                p.last_message_preview !== item.last_message_preview
             })
             return hasDiff ? incomingConvs : prev
           })
@@ -210,22 +268,18 @@ export default function Messages() {
         }
 
         if (activePoll && msgRes?.success && msgRes.data?.items && String(currentActiveId) === String(activeIdRef.current)) {
-          const incomingMsgs = msgRes.data.items
+          const dedupedIncoming = dedupeMessages(msgRes.data.items)
           setMessages(prev => {
-            if (prev.length !== incomingMsgs.length) return incomingMsgs
-            const hasDiff = incomingMsgs.some((item, idx) => {
-              const p = prev[idx]
-              return !p ||
-                String(p.id) !== String(item.id) ||
-                p.delivery_status !== item.delivery_status ||
-                p.content !== item.content
-            })
-            return hasDiff ? incomingMsgs : prev
+            if (areMessagesEqual(prev, dedupedIncoming)) {
+              return prev
+            }
+            return dedupedIncoming
           })
         }
       } catch {
         // Silent catch during background polling
       } finally {
+        inFlight = false
         if (activePoll) {
           const interval = document.visibilityState === 'visible' ? 2500 : 10000
           timer = setTimeout(poll, interval)
@@ -236,7 +290,7 @@ export default function Messages() {
     timer = setTimeout(poll, 2500)
 
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && activePoll) {
+      if (document.visibilityState === 'visible' && activePoll && !inFlight) {
         if (timer) clearTimeout(timer)
         poll()
       }
@@ -251,13 +305,14 @@ export default function Messages() {
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('focus', onVisible)
     }
-  }, [activeId])
+  }, [])
 
-  // Scroll to bottom when messages update
+  // Auto-scroll to latest message only when user is already near the bottom
   useEffect(() => {
-    const el = thread.current
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-  }, [messages.length])
+    if (isNearBottomRef.current) {
+      scrollToBottom('smooth')
+    }
+  }, [messages, scrollToBottom])
 
   const active = conversations.find(c => String(c.id) === String(activeId)) || activeDetails
 
@@ -292,9 +347,16 @@ export default function Messages() {
       })
 
       if (res.success && res.data) {
-        setMessages(prev => [...prev, res.data])
+        setMessages(prev => dedupeMessages([...prev, res.data]))
+        setConversations(prev => prev.map(c =>
+          String(c.id) === String(active.id)
+            ? { ...c, last_message_preview: text, last_message_at: res.data.created_at || new Date().toISOString() }
+            : c
+        ))
         setDraft('')
         setShowQuickReplies(false)
+        isNearBottomRef.current = true
+        scrollToBottom('smooth')
       }
     } catch (err) {
       if (err.code === 'WINDOW_EXPIRED') {
@@ -467,7 +529,7 @@ export default function Messages() {
 
             <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
               {/* Messages Thread */}
-              <div className="thread" ref={thread} style={{ flex: 1 }}>
+              <div className="thread" ref={thread} onScroll={handleScroll} style={{ flex: 1 }}>
                 <span className="day-divider">WhatsApp Conversation History</span>
 
                 {loadingMsgs ? (
